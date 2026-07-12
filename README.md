@@ -3,8 +3,8 @@
 施工規範知識庫的 **client-side 靜態網頁**（方案 A）。案件檔全程在瀏覽器內處理，不上傳。
 
 ## 檔案
-- `index.html` — 監造試驗查核 MVP（Phase 2）
-- `spec_data.js` — 規則燃料（`window.SPEC_DATA`），由知識庫編譯
+- `index.html` — v0.3，兩用：**試驗查核**（應辦組數＋漏編）＋**監造計畫產生**（第五/七章草稿，下載 .doc）
+- `spec_data.js` — 規則燃料（`window.SPEC_DATA`），由知識庫編譯（含試驗庫、工項停留點、查核紅線、標單別名）
 
 ## 更新規則資料（KB 改動後）
 ```bash
