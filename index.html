@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>監造試驗查核</title>
+<script src="spec_data.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  :root{ --bg:#f7f8fa; --card:#fff; --ink:#1c2330; --sub:#5b6472; --line:#e3e7ee;
+    --accent:#2b6cb0; --ok:#2f855a; --warn:#c05621; --err:#c53030; --chip:#edf2f7; }
+  @media (prefers-color-scheme:dark){ :root{ --bg:#12151b; --card:#1b1f27; --ink:#e6e9ef;
+    --sub:#9aa4b2; --line:#2a2f3a; --accent:#63b3ed; --ok:#68d391; --warn:#f6ad55; --err:#fc8181; --chip:#252b36; } }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"PingFang TC","Noto Sans TC",system-ui,sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.55;font-size:15px}
+  .wrap{max-width:1080px;margin:0 auto;padding:24px 18px 60px}
+  h1{font-size:22px;margin:0 0 4px} .sub{color:var(--sub);margin:0 0 18px;font-size:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:16px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--chip);color:var(--ink);cursor:pointer}
+  button.primary{background:var(--accent);color:#fff;border-color:transparent}
+  button:hover{filter:brightness(1.05)}
+  .pill{background:var(--chip);border-radius:20px;padding:3px 12px;font-size:13px}
+  .stat{display:flex;gap:14px;flex-wrap:wrap} .stat b{font-size:19px}
+  .stat .box{background:var(--chip);border-radius:9px;padding:8px 14px;min-width:96px}
+  .stat .box small{display:block;color:var(--sub);font-size:12px}
+  table{border-collapse:collapse;width:100%;font-size:13.5px}
+  .scroll{overflow-x:auto}
+  th,td{border-bottom:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{color:var(--sub);font-weight:600;white-space:nowrap}
+  .code{font-family:ui-monospace,Menlo,monospace;background:var(--chip);border-radius:5px;padding:1px 6px;font-size:12.5px}
+  .grp .h{font-weight:700;font-size:15px}
+  .miss{color:var(--err);font-weight:600} .ok{color:var(--ok)} .warn{color:var(--warn)}
+  .n{font-variant-numeric:tabular-nums;font-weight:700}
+  .muted{color:var(--sub);font-size:12.5px}
+  .tag{font-size:11.5px;padding:1px 7px;border-radius:5px;font-weight:600}
+  .tag.y{background:rgba(56,161,105,.15);color:var(--ok)} .tag.n{background:rgba(197,48,48,.15);color:var(--err)}
+  .foot{color:var(--sub);font-size:12px;margin-top:22px}
+  details summary{cursor:pointer;color:var(--sub)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>監造試驗查核 <span class="pill">v0.2</span></h1>
+  <p class="sub">上傳空白標單（.xls/.xlsx）→ 依編碼(章碼)自動對到工項，列出<b>應辦試驗與組數</b>，並比對標單「材料試驗費」明細找出<b>漏編</b>。全程瀏覽器內處理，不上傳。</p>
+
+  <div class="card">
+    <div class="row">
+      <label class="primary" style="padding:8px 14px;border-radius:8px;cursor:pointer">📄 上傳標單 .xls/.xlsx
+        <input type="file" id="file" accept=".xls,.xlsx" style="display:none"></label>
+      <button id="sampleBtn">▶ 載入範例標單（航空城復原工程）</button>
+      <span class="muted" id="src"></span>
+    </div>
+    <div class="muted" style="margin-top:10px">規則來源：<span id="meta"></span></div>
+  </div>
+
+  <div id="out"></div>
+  <p class="foot">監造試驗查核 v0.2 ｜ 燃料 spec_data.js（由 <span class="code">spec_kb_export.py</span> 從施工規範知識庫編譯）｜ 靜態 client-side</p>
+</div>
+
+<script>
+const D = window.SPEC_DATA;
+document.getElementById('meta').textContent =
+  `工項 ${Object.keys(D.工項).length} 章碼｜試驗庫 ${D.meta.counts.試驗庫}｜標單別名 ${D.meta.counts.別名}（${D.meta.generated}）`;
+const esc = s => String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+// ---- 解析工作簿：詳細表(編碼→章碼+數量)、資源統計表(編列試驗) ----
+function parseWB(wb){
+  let items=[], tests=new Set(), detailSheet='';
+  for(const sn of wb.SheetNames){
+    const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,raw:false});
+    // 詳細表：表頭同時有 項目/說明 與 編碼
+    const hi = aoa.findIndex(r=>r&&r.some(c=>/項\s*目|品名|說明/.test(c||''))&&r.some(c=>/編\s*碼/.test(c||'')));
+    if(hi>=0 && !items.length){
+      detailSheet=sn;
+      const hdr=aoa[hi].map(c=>String(c||''));
+      const find=re=>hdr.findIndex(h=>re.test(h));
+      const iN=find(/項\s*目|品名|說明/), iU=find(/單\s*位/), iQ=find(/數\s*量/), iC=find(/編\s*碼/);
+      for(const r of aoa.slice(hi+1)){
+        if(!r) continue;
+        const code=String(r[iC]||'').trim(); const m=code.match(/^(\d{5})/); // 錨定：僅編碼前5碼為數字者(排除W雜項碼)
+        const name=String(r[iN]||'').trim();
+        if(m && name){
+          const q=parseFloat(String(r[iQ]||'').replace(/[,，\s]/g,'')); // 去千分位逗號
+          items.push({章碼:m[1], 項目:name, 單位:String(r[iU]||'').trim(), 數量:isNaN(q)?null:q});
+        }
+      }
+    }
+    // 資源統計表 / 任何含「試驗」的資源名 → 編列試驗
+    if(/資源|統計/.test(sn)){
+      for(const r of aoa){ if(!r) continue;
+        for(const c of r){ const s=String(c||'').trim(); if(/試驗/.test(s)&&s.length>3) tests.add(s); } }
+    }
+  }
+  return {items, tests:[...tests], detailSheet};
+}
+
+// ---- 組數計算 ----
+function calcN(machine, qty, unit){
+  const m=machine||{}; const u=(unit||'').toLowerCase().replace('㎡','m2').replace('㎥','m3');
+  if(u==='m3'&&m.per_m3) return {n:Math.ceil(qty/m.per_m3), note:m.per_day_min?'另每日≥'+m.per_day_min+'（取大值）':''};
+  if(u==='m2'&&m.per_m2) return {n:Math.ceil(qty/m.per_m2), note:''};
+  if(u==='m2'&&m.per_m2_per_layer) return {n:Math.ceil(qty/m.per_m2_per_layer), note:'×分層數'};
+  if(m.per_m2_per_layer) return {n:null, note:'每層每'+m.per_m2_per_layer+'m²（需面積×層數）'};
+  if(m.per_batch) return {n:null, note:'每批×'+m.per_batch+'（需批數）'};
+  if(m.per_truck) return {n:null, note:'每車'};
+  if(m.per_source) return {n:null, note:'每料源'};
+  if(m.per_lane_m) return {n:null, note:'每車道'+m.per_lane_m+'m'};
+  return {n:null, note:''};
+}
+
+// ---- 分析 ----
+function analyze(items, tests, srcLabel){
+  document.getElementById('src').textContent = srcLabel||'';
+  // 依章碼歸併（同章碼多項 → 合計數量，取同單位）
+  const byCode={};
+  for(const it of items){ (byCode[it.章碼]=byCode[it.章碼]||[]).push(it); }
+  const codes=Object.keys(byCode).sort();
+  let 命中=0, 未建=0, 漏編筆=0;
+  let cards=''; const 未建list=[];
+  for(const code of codes){
+    const wi=D.工項[code];
+    const rows=byCode[code];
+    if(!wi){ 未建++;
+      未建list.push(`<tr><td><span class="code">${code}</span></td><td>${rows.length}</td><td class="muted">${esc(rows[0].項目.slice(0,28))}</td></tr>`);
+      continue; }
+    命中++;
+    const lib=D.試驗庫[wi.試驗頻率卡];
+    // 合計數量（取出現最多的單位）
+    const uCount={}; rows.forEach(r=>{ if(r.單位) uCount[r.單位]=(uCount[r.單位]||0)+1; });
+    const unit=Object.keys(uCount).sort((a,b)=>uCount[b]-uCount[a])[0]||'';
+    const qty=rows.filter(r=>r.單位===unit).reduce((s,r)=>s+(r.數量||0),0);
+    let body='';
+    if(lib){ for(const t of lib.試驗項目){
+      const c=calcN(t.機器,qty,unit);
+      const nCell=c.n!=null?`<span class="n ok">${c.n}</span> 組`:`<span class="warn">${esc(c.note||'—')}</span>`;
+      // 漏編：有關鍵字才判定
+      let 編列tag='';
+      if(t.關鍵字&&t.關鍵字.length){
+        const hit=tests.some(name=>t.關鍵字.some(k=>name.includes(k)));
+        編列tag = hit?'<span class="tag y">已編列</span>':'<span class="tag n">⚠ 漏編</span>';
+        if(!hit) 漏編筆++;
+      } else 編列tag='<span class="muted">—</span>';
+      body+=`<tr><td>${esc(t.項目)}</td><td>${esc(t.頻率)}</td><td>${nCell}${c.n!=null&&c.note?` <span class="muted">${esc(c.note)}</span>`:''}</td><td>${編列tag}</td><td class="muted">${esc(t.依據)}</td></tr>`;
+    }} else body=`<tr><td colspan="5" class="warn">工項已對到，試驗庫尚未建</td></tr>`;
+    const famNote = code!==wi.chapter_code?`（家族→${wi.chapter_code}）`:'';
+    cards+=`<div class="card"><div class="scroll"><table>
+      <tr class="grp"><td colspan="5" class="h ok">✓ <span class="code">${code}</span>${famNote} ${esc(wi.title)}
+        <span class="muted">　標單 ${rows.length} 項｜合計 ${qty||'—'} ${esc(unit)}</span></td></tr>
+      <tr><th>應辦試驗項目</th><th>頻率</th><th>應辦組數</th><th>標單編列</th><th>依據</th></tr>
+      ${body}</table></div></div>`;
+  }
+  const summary=`<div class="card"><div class="stat">
+    <div class="box"><small>標單章碼</small><b>${codes.length}</b></div>
+    <div class="box"><small>對到工項</small><b class="ok">${命中}</b></div>
+    <div class="box"><small>未建工項</small><b class="${未建?'miss':''}">${未建}</b></div>
+    <div class="box"><small>疑似漏編試驗</small><b class="${漏編筆?'warn':''}">${漏編筆}</b></div>
+    <div class="box"><small>標單編列試驗</small><b>${tests.length}</b></div>
+  </div>
+  <div class="muted" style="margin-top:8px">「標單編列」比對：以應辦試驗核心詞（壓實度/含油/篩分…）在標單「材料試驗費」明細中搜尋；未命中→疑似漏編（需人工複核，名稱可能不同）。</div>
+  <details style="margin-top:8px"><summary>標單編列試驗明細（${tests.length}）</summary>
+    <div class="muted" style="margin-top:6px">${tests.map(esc).join('　·　')||'（未讀到）'}</div></details>
+  </div>`;
+  const 未建card = 未建list.length?`<div class="card"><details><summary class="miss" style="font-weight:600">
+    ⚠ 未建工項卡的章碼 ${未建list.length} 個（覆蓋缺口，本庫尚未建 → 無法檢核其試驗）</summary>
+    <div class="scroll" style="margin-top:8px"><table><tr><th>章碼</th><th>標單項數</th><th>例</th></tr>${未建list.join('')}</table></div>
+    </details></div>`:'';
+  document.getElementById('out').innerHTML=summary+cards+未建card;
+}
+
+function handleWB(wb, label){ const {items,tests}=parseWB(wb); analyze(items,tests,label+`（工項 ${items.length}）`); }
+function readFile(f){ const rd=new FileReader();
+  rd.onload=e=>handleWB(XLSX.read(e.target.result,{type:'array'}), '上傳：'+f.name);
+  rd.readAsArrayBuffer(f); }
+
+document.getElementById('file').onchange=e=>{ const f=e.target.files[0]; if(f) readFile(f); };
+document.getElementById('sampleBtn').onclick=()=>{
+  fetch('sample.xls').then(r=>r.arrayBuffer())
+    .then(b=>handleWB(XLSX.read(b,{type:'array'}),'範例：航空城復原工程開口契約'))
+    .catch(()=>document.getElementById('out').innerHTML='<div class="card miss">範例檔載入失敗（需經 http 伺服器）。請改用「上傳標單」。</div>');
+};
+</script>
+</body>
+</html>
