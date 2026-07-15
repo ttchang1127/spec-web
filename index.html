@@ -122,6 +122,10 @@ function calcN(machine,qty,unit){
   if(m.per_truck) return {n:null,note:'每車'};
   if(m.per_source) return {n:null,note:'每料源'};
   if(m.per_lane_m) return {n:null,note:'每車道'+m.per_lane_m+'m'};
+  if(m.per_pour) return {n:null,note:'每次澆置（依澆置次數）'};
+  if(m.per_m_after_first_100) return {n:null,note:'分段：達門檻1次、超過每100m加1次'};
+  if(m.per_piece_after_first_100) return {n:null,note:'分段：達門檻1次、超過每100塊加1次'};
+  if(m.per_piece_after_first_200) return {n:null,note:'分段：達門檻1次、超過每200塊加1次'};
   return {n:null,note:''};
 }
 function grouped(items){ const b={}; items.forEach(it=>{(b[it.章碼]=b[it.章碼]||[]).push(it);});
