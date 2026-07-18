@@ -46,8 +46,8 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>監造試驗查核 <span class="pill">v0.3</span></h1>
-  <p class="sub">上傳空白標單（.xls/.xlsx）→ 兩用：<b>試驗查核</b>（應辦組數＋漏編）｜<b>監造計畫產生</b>（第五、七章草稿，可下載 .doc）。全程瀏覽器內處理，不上傳。</p>
+  <h1>監造試驗查核 / 計畫產生 <span class="pill">v1.0</span></h1>
+  <p class="sub">上傳空白標單（.xls/.xlsx）→ 兩用：<b>試驗查核</b>（應辦組數＋漏編）｜<b>監造計畫產生</b>（完整九章草稿，可下載 .doc）。全程瀏覽器內處理，不上傳。</p>
 
   <div class="card">
     <div class="row">
@@ -59,14 +59,25 @@
     <div class="row" style="margin-top:12px">
       <span class="muted">模式：</span>
       <button id="mCheck" class="on">🔍 試驗查核</button>
-      <button id="mPlan">📝 監造計畫產生（第五/七章）</button>
+      <button id="mPlan">📝 監造計畫產生（九章）</button>
       <button id="dl" style="display:none">⬇ 下載 .doc</button>
     </div>
+    <details style="margin-top:12px"><summary>🏷 案件資料（填入後帶入計畫抬頭與第一章；可留空）</summary>
+      <div class="row" style="margin-top:10px">
+        <input id="pName" placeholder="工程名稱" style="flex:1;min-width:220px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)">
+        <input id="pNo" placeholder="契約編號" style="width:180px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)">
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input id="pOwner" placeholder="主辦機關" style="flex:1;min-width:160px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)">
+        <input id="pSup" placeholder="監造單位" style="flex:1;min-width:160px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)">
+        <input id="pCon" placeholder="承攬廠商" style="flex:1;min-width:160px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)">
+      </div>
+    </details>
     <div class="muted" style="margin-top:10px">規則來源：<span id="meta"></span></div>
   </div>
 
   <div id="out"></div>
-  <p class="foot">v0.3 ｜ 燃料 spec_data.js（由 <span class="code">spec_kb_export.py</span> 從施工規範知識庫編譯）｜ 靜態 client-side</p>
+  <p class="foot">v1.0 ｜ 燃料 spec_data.js（由 <span class="code">spec_kb_export.py</span> 從施工規範知識庫編譯）｜ 靜態 client-side</p>
 </div>
 
 <script>
@@ -77,19 +88,39 @@ document.getElementById('meta').textContent =
 const esc = s => String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const wiName = t => String(t||'').replace(/^工項\s*/,'');
 
-// ---- 常數塊（監造計畫製作綱要 第五/七章樣板；SSOT 見 KB 04 章樣板卡）----
+// ---- 常數塊（監造計畫製作綱要九章樣板；SSOT 見 KB 04 章樣板卡與九章骨架對照）----
 const BOILER = {
-  s51: ['送審管制：廠商擬用之材料/設備，備料前提送型錄、試驗報告、材料規範、樣品及協力廠商證明送監造審查（管制總表表5.1），合格始得進場施工。',
-        '試驗單位審查：需取樣試驗者，試驗室應事先送審；鋼筋、混凝土、瀝青混凝土等應由符合 CNS 17025（ISO/IEC 17025）之實驗室辦理並附認證標誌（作業要點§12）。',
-        '抽驗作業：監造單位依本計畫所訂頻率會同廠商取樣、送驗並判定；使用之品質抽驗紀錄表依下列材料品質標準訂定。',
-        '進場查驗：不需取樣試驗之材料，進場時仍應查驗核對，確認與送審合格者相符。',
-        '結果管制：檢/試驗結果之合格與不合格處理如表5.2；不合格應辦不合格報告及通知，要求辦理矯正與預防措施並列管改善。',
-        '費用：材料設備抽（檢）驗費用依作業要點§13於招標文件單獨量化編列。',
-        '變更：變更設計涉材料或工法變更時，即時修訂本章材料品質標準。'],
-  s71: ['檢驗停留點（Hold Point）抽查：隱蔽部分及重要結構施工項目列為停留點，於開工前（函送本監造計畫同時）明確告知廠商檢驗時點；廠商完成自主檢查後提出檢驗申請，經監造單位到場抽查合格，方得進行次一工序。',
-        '不定期抽查：對非停留點項目由監造單位不定期抽查，並於施工品質抽查紀錄表簽認。',
-        '結果處置：可即時改正之缺失當場通知限期改正並複查；重大缺失或重複性不合格辦不合格報告及通知，要求辦理矯正與預防措施，建立缺失改善管制表定期列管。',
-        '簽認原則：監造單位不得於廠商自主檢查表上簽證；監造抽查紀錄表至少含抽查項目、標準、位置、結果等欄位。']
+  s1: ['依據：本監造計畫依「公共工程施工品質管理作業要點」第 11 點及「公共工程監造計畫製作綱要」訂定，作為本工程監造作業之依循。',
+       '監造範圍：涵蓋施工廠商品質計畫與施工計畫審查、材料與設備抽驗、施工抽查與檢驗停留點查證、品質稽核及文件紀錄管理等監造事項。',
+       '名詞定義：檢驗停留點（Hold Point）指未經監造單位查驗合格不得逕行次一工序之查驗點；自主檢查係施工廠商依品質計畫辦理之查證作業。'],
+  s2: ['監造組織：依契約置監造主管、專任工程人員及必要之監造人員；組織架構圖與人員配置如附表（依實際到位人員填列）。',
+       '權責分工：依「公共工程施工階段契約約定權責分工表」與作業要點第 11 點辦理；監造單位負責審查、抽驗、抽查、查證與缺失列管，不代行廠商自主品管之責。',
+       '人員異動：監造人員異動應報請主辦機關備查，並辦理工作交接以維持監造作業之連續性。'],
+  s3: ['審查時機：施工廠商應於開工前或各分項施工前，依進度提送品質計畫（含材料設備品質管理標準、自主檢查表、施工流程圖）送監造單位審查。',
+       '審查重點：品質計畫應涵蓋管理範圍、組織與權責、材料設備品質管理、施工要領、自主檢查程序、檢驗停留點、不合格處理及矯正預防等（綱要表 3.1）。',
+       '審查處置：審查未通過者退回補正，補正完成並經審查同意後始得據以施工；施工中品質計畫如有變更應辦理修訂送審。'],
+  s4: ['送審分階段：施工廠商應按主要施工項目分階段提送施工計畫，於各該分項施工前完成審查。',
+       '審查重點：施工計畫應涵蓋工程概述、施工方法與程序、機具設備、人力配置、施工預定進度、假設工程、交通維持、職業安全衛生、環境保護及品質管理措施等（綱要表 4.1/4.2）。',
+       '審查處置：審查意見以書面通知廠商辦理補正；未經審查同意之施工計畫不得據以施工。'],
+  s51:['送審管制：廠商擬用之材料/設備，備料前提送型錄、試驗報告、材料規範、樣品及協力廠商證明送監造審查（管制總表表5.1），合格始得進場施工。',
+       '試驗單位審查：需取樣試驗者，試驗室應事先送審；鋼筋、混凝土、瀝青混凝土等應由符合 CNS 17025（ISO/IEC 17025）之實驗室辦理並附認證標誌（作業要點§12）。',
+       '抽驗作業：監造單位依本計畫所訂頻率會同廠商取樣、送驗並判定；使用之品質抽驗紀錄表依下列材料品質標準訂定。',
+       '進場查驗：不需取樣試驗之材料，進場時仍應查驗核對，確認與送審合格者相符。',
+       '結果管制：檢/試驗結果之合格與不合格處理如表5.2；不合格應辦不合格報告及通知，要求辦理矯正與預防措施並列管改善。',
+       '費用：材料設備抽（檢）驗費用依作業要點§13於招標文件單獨量化編列。',
+       '變更：變更設計涉材料或工法變更時，即時修訂本章材料品質標準。'],
+  s6: ['本工程屬道路／排水類，無機電設備功能運轉測試項目，本章免列；如契約含機電、號誌、抽水或監控設備，應另訂單機、系統及整體功能試運轉之抽驗程序及標準。'],
+  s71:['檢驗停留點（Hold Point）抽查：隱蔽部分及重要結構施工項目列為停留點，於開工前（函送本監造計畫同時）明確告知廠商檢驗時點；廠商完成自主檢查後提出檢驗申請，經監造單位到場抽查合格，方得進行次一工序。',
+       '不定期抽查：對非停留點項目由監造單位不定期抽查，並於施工品質抽查紀錄表簽認。',
+       '結果處置：可即時改正之缺失當場通知限期改正並複查；重大缺失或重複性不合格辦不合格報告及通知，要求辦理矯正與預防措施，建立缺失改善管制表定期列管。',
+       '簽認原則：監造單位不得於廠商自主檢查表上簽證；監造抽查紀錄表至少含抽查項目、標準、位置、結果等欄位。'],
+  s8: ['稽核權責：監造單位辦理內部品質稽核，主辦機關及工程施工查核小組辦理外部查核；三級品管架構依作業要點辦理。',
+       '稽核範圍與頻率：就材料抽驗、施工抽查、停留點查證、缺失改善等執行情形定期稽核，頻率依契約與工程性質訂定。',
+       '缺失處理：稽核發現之缺失開立缺失改善通知並列入缺失改善管制表，追蹤矯正與預防措施至結案；重大或重複性缺失報主辦機關。',
+       '查核配合：配合工程施工查核小組查核，查核缺失依規定期限改善並回報。'],
+  s9: ['文件管制：品質文件與品質紀錄依編碼原則登錄、編號、審查、發行、修訂與作廢管制，確保現場使用為有效版本。',
+       '紀錄管理：材料試驗報告、施工抽查紀錄、檢驗停留點查證紀錄、缺失改善紀錄等應即時登錄、歸檔並可追溯。',
+       '移轉存查：工程完工後品質紀錄依契約與檔案規定移交主辦機關存查；電子檔與正本之保存年限依規定辦理。']
 };
 
 function parseWB(wb){
@@ -166,36 +197,62 @@ function renderCheck(){
   document.getElementById('dl').style.display='none';
 }
 
-// ================= 監造計畫產生（第五、七章）=================
+// ================= 監造計畫產生（完整九章）=================
+const OL = arr => `<ol>${arr.map(t=>`<li>${esc(t)}</li>`).join('')}</ol>`;
+function profile(){ const g=id=>(document.getElementById(id)||{}).value||'';
+  return {name:g('pName'),no:g('pNo'),owner:g('pOwner'),sup:g('pSup'),con:g('pCon')}; }
+
 function planHTML(){
-  const matched=grouped(LAST.items).filter(x=>x.wi);
-  // 第五章
+  const all=grouped(LAST.items), matched=all.filter(x=>x.wi), P=profile();
+  const blank='　　　　　　';
+  // 抬頭
+  const head=`<h1 style="text-align:center;font-size:20pt;border:none">${esc(P.name||'○○工程')}　施工監造計畫</h1>
+    <table><tr><th>契約編號</th><td>${esc(P.no||blank)}</td><th>主辦機關</th><td>${esc(P.owner||blank)}</td></tr>
+    <tr><th>監造單位</th><td>${esc(P.sup||blank)}</td><th>承攬廠商</th><td>${esc(P.con||blank)}</td></tr></table>`;
+  // §一 主要施工項目及數量（標單章碼彙總）
+  let ch1rows=''; for(const {code,wi,rows} of all){
+    const uC={};rows.forEach(r=>{if(r.單位)uC[r.單位]=(uC[r.單位]||0)+1;});
+    const unit=Object.keys(uC).sort((a,b)=>uC[b]-uC[a])[0]||'';
+    const qty=rows.filter(r=>r.單位===unit).reduce((s,r)=>s+(r.數量||0),0);
+    ch1rows+=`<tr><td><span class="code">${code}</span></td><td>${wi?esc(wiName(wi.title)):`<span class="warn">${esc(rows[0].項目.slice(0,20))}（未建卡）</span>`}</td><td>${rows.length}</td><td>${qty?qty.toLocaleString():'—'} ${esc(unit)}</td></tr>`; }
+  // §五 材料品質標準
   let ch5=''; for(const {code,wi} of matched){ const lib=D.試驗庫[wi.試驗頻率卡]; if(!lib) continue;
     for(const t of lib.試驗項目) ch5+=`<tr><td>${esc(wiName(wi.title))}</td><td>${esc(t.項目)}</td><td>${esc(t.判定||'—')}</td><td>${esc(t.頻率)}</td><td>${esc(t.依據)}</td></tr>`; }
-  // 第七章
+  // §七 施工抽查 + 停留點
   let ch7='', holds='';
   for(const {code,wi} of matched){
     let sp=''; for(const s of (wi.停留點||[])){ sp+=`<tr><td>${esc(s.階段)}</td><td>${esc(s.查驗項目)}</td><td>${esc(s.停留點)}</td></tr>`;
-      if((s.停留點||'').includes('＊')||(s.停留點||'').includes('*')) holds+=`<li>${esc(wiName(wi.title))}（${code}）：${esc(s.查驗項目)}〔${esc(s.階段)}〕</li>`; }
+      if((s.停留點||'').includes('＊')||(s.停留點||'').includes('*')||(s.停留點||'')==='H') holds+=`<li>${esc(wiName(wi.title))}（${code}）：${esc(s.查驗項目)}〔${esc(s.階段)}〕</li>`; }
     const red=(wi.查核紅線||[]).map(r=>`<li>${esc(r)}</li>`).join('');
-    ch7+=`<h4>${esc(wi.title)}（${code}）</h4>
+    ch7+=`<h4>${esc(wiName(wi.title))}（${code}）</h4>
       <table><tr><th>施工階段</th><th>查驗項目</th><th>檢驗停留點</th></tr>${sp||'<tr><td colspan=3 class=muted>（停留點待補）</td></tr>'}</table>
       ${red?`<p><b>量化抽查紅線：</b></p><ul>${red}</ul>`:''}`;
   }
-  const li5=BOILER.s51.map(t=>`<li>${esc(t)}</li>`).join('');
-  const li7=BOILER.s71.map(t=>`<li>${esc(t)}</li>`).join('');
+  // §三 一級品管文件（對到工項清單）
+  const ch3list=matched.map(({code,wi})=>`<li>${esc(wiName(wi.title))}（${code}）：品質管理標準／自主檢查表／施工流程圖</li>`).join('');
   return `<div class="plan">
-    <p class="muted">※ 依標單對到之工項自動生成；常數塊源自監造計畫製作綱要第五/七章樣板，數值源自施工規範知識庫（可追溯）。請依契約與實際工項增修。</p>
-    <h2>第五章　材料與設備抽驗程序及標準</h2>
-    <h3>5.1 抽驗作業程序</h3><ol>${li5}</ol>
-    <h3>5.2 材料品質標準</h3>
+    <p class="muted">※ 依監造計畫製作綱要九章骨架生成：常數段＝綱要標準文字；${'＃'}表格數值＝施工規範知識庫（可追溯至章碼/CNS/原文）。⑥機電運轉道路案免列。請依契約與實際工項增修後定稿。</p>
+    ${head}
+    <h2>第一章　監造範圍</h2>${OL(BOILER.s1)}
+    <h3>1.1 主要施工項目及數量（依標單彙整）</h3>
+    <table><tr><th>章碼</th><th>工項</th><th>標單項數</th><th>合計數量</th></tr>${ch1rows||'<tr><td colspan=4 class=muted>（未載入標單）</td></tr>'}</table>
+    <h2>第二章　監造組織及權責分工</h2>${OL(BOILER.s2)}
+    <p class="muted">〔監造組織架構圖與人員配置表：依實際到位人員填列〕</p>
+    <h2>第三章　品質計畫審查程序</h2>${OL(BOILER.s3)}
+    <h3>3.1 本案應審查之一級品質管制文件（依對到工項）</h3>
+    <ul>${ch3list||'<li class=muted>（標單未對到已建工項）</li>'}</ul>
+    <h2>第四章　施工計畫審查程序</h2>${OL(BOILER.s4)}
+    <h2>第五章　材料與設備抽驗程序及標準</h2>${OL(BOILER.s51)}
+    <h3>5.1 材料品質標準（依對到工項自動生成）</h3>
     <table><tr><th>材料/工項</th><th>試驗項目</th><th>抽驗標準</th><th>抽驗頻率</th><th>依據</th></tr>${ch5||'<tr><td colspan=5 class=muted>（標單未對到已建工項）</td></tr>'}</table>
-    <h3>5.3 應用表單</h3><ul><li>表5.1 材料設備送審管制總表</li><li>表5.2 材料設備檢（試）驗管制總表</li></ul>
-    <h2>第七章　施工抽查程序及標準</h2>
-    <h3>7.1 施工抽查程序</h3><ol>${li7}</ol>
-    <h3>7.2 施工抽查標準（依工項）</h3>${ch7||'<p class=muted>（標單未對到已建工項）</p>'}
-    <h3>7.3 檢驗停留點清單</h3><ul>${holds||'<li class=muted>（無）</li>'}</ul>
-    <h3>7.4 應用表單</h3><ul><li>表7.1 施工抽查標準一覽表</li><li>表7.2 各工項施工抽查標準</li><li>表7.3 施工抽查紀錄</li></ul>
+    <h3>5.2 應用表單</h3><ul><li>表5.1 材料設備送審管制總表</li><li>表5.2 材料設備檢（試）驗管制總表</li></ul>
+    <h2>第六章　設備功能運轉測試程序及標準</h2>${OL(BOILER.s6)}
+    <h2>第七章　施工抽查程序及標準</h2>${OL(BOILER.s71)}
+    <h3>7.1 施工抽查標準（依工項）</h3>${ch7||'<p class=muted>（標單未對到已建工項）</p>'}
+    <h3>7.2 檢驗停留點清單（開工前告知廠商）</h3><ul>${holds||'<li class=muted>（無）</li>'}</ul>
+    <h3>7.3 應用表單</h3><ul><li>表7.1 施工抽查標準一覽表</li><li>表7.2 各工項施工抽查標準</li><li>表7.3 施工抽查紀錄</li></ul>
+    <h2>第八章　品質稽核</h2>${OL(BOILER.s8)}
+    <h2>第九章　文件紀錄管理系統</h2>${OL(BOILER.s9)}
   </div>`;
 }
 function renderPlan(){
@@ -208,7 +265,8 @@ function downloadDoc(){
     <style>body{font-family:'標楷體',serif;font-size:12pt;line-height:1.6}table{border-collapse:collapse;width:100%}td,th{border:1px solid #000;padding:4px 6px;font-size:10.5pt}h2{font-size:15pt;border-bottom:1.5pt solid #000;padding-bottom:2pt}h3{font-size:13pt}h4{font-size:12pt}ol,ul{margin:4pt 0 4pt 22pt}</style></head>
     <body>${html}</body></html>`;
   const blob=new Blob(['﻿'+doc],{type:'application/msword'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='監造計畫_第五七章_草稿.doc'; a.click();
+  const nm=(profile().name||'監造計畫')+'_九章草稿.doc';
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=nm; a.click();
 }
 
 function render(){ if(!LAST){document.getElementById('out').innerHTML='';return;} MODE==='plan'?renderPlan():renderCheck(); }
