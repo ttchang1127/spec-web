@@ -149,6 +149,21 @@ function calcN(machine,qty,unit){
   if(u==='m2'&&m.per_m2) return {n:Math.ceil(qty/m.per_m2),note:''};
   if(u==='m2'&&m.per_m2_per_layer) return {n:Math.ceil(qty/m.per_m2_per_layer),note:'×分層數'};
   if(m.per_m2_per_layer) return {n:null,note:'每層每'+m.per_m2_per_layer+'m²（需面積×層數）'};
+  // 公路局：每 N 單位取樣（線性/門檻）＋免驗門檻＋抽組倍數＋餘數併批
+  if(m.per_unit){
+    if(m.exempt_below && qty < m.exempt_below)
+      return {n:0,note:'<'+m.exempt_below+' 免驗（憑合格證明）'};
+    const full=Math.floor(qty/m.per_unit), rem=qty%m.per_unit;
+    let batches=full + (rem >= (m.remainder_min||1) ? 1 : 0);
+    if(batches<1) batches=1;              // 達檢驗門檻後至少 1 批
+    const n=batches*(m.samples_each||1);
+    const note=(m.exempt_below?'≥'+m.exempt_below+' 起檢；':'')
+      +'每'+m.per_unit+(m.samples_each?' 抽'+m.samples_each+'組':' 取1次')
+      +(m.remainder_min?'（餘≥'+m.remainder_min+'另計）':'');
+    return {n,note};
+  }
+  if(m.exempt_below) return {n:0,note:'<'+m.exempt_below+' 免驗（憑證明），達門檻另計'};
+  if(m.per_ratio) return {n:null,note:'原廠取樣數量之'+m.per_ratio+'%（需原廠基數）'};
   if(m.per_batch) return {n:null,note:'每批×'+m.per_batch+'（需批數）'};
   if(m.per_truck) return {n:null,note:'每車'};
   if(m.per_source) return {n:null,note:'每料源'};
