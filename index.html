@@ -36,6 +36,11 @@
   .muted{color:var(--sub);font-size:12.5px}
   .tag{font-size:11.5px;padding:1px 7px;border-radius:5px;font-weight:600}
   .tag.y{background:rgba(56,161,105,.15);color:var(--ok)} .tag.n{background:rgba(197,48,48,.15);color:var(--err)}
+  details.mat{margin-top:10px;border-top:1px dashed var(--line);padding-top:8px}
+  details.mat>summary{cursor:pointer;font-size:13px;font-weight:600;list-style:none}
+  details.mat>summary::-webkit-details-marker{display:none}
+  details.mat>summary::before{content:'▸ ';color:var(--sub)}
+  details.mat[open]>summary::before{content:'▾ '}
   .plan h2{font-size:18px;border-bottom:2px solid var(--accent);padding-bottom:4px;margin:22px 0 10px}
   .plan h3{font-size:15px;margin:16px 0 6px} .plan h4{font-size:14px;margin:12px 0 4px;color:var(--accent)}
   .plan p{margin:6px 0;font-size:13.5px} .plan ul{margin:4px 0 4px 20px;font-size:13.5px} .plan li{margin:2px 0}
@@ -84,7 +89,7 @@
 const D = window.SPEC_DATA;
 let LAST=null, MODE='check';
 document.getElementById('meta').textContent =
-  `工項 ${Object.keys(D.工項).length} 章碼｜試驗庫 ${D.meta.counts.試驗庫}｜標單別名 ${D.meta.counts.別名}（${D.meta.generated}）`;
+  `工項 ${Object.keys(D.工項).length} 章碼｜試驗庫 ${D.meta.counts.試驗庫}｜材料頻率 ${Object.values(D.工項).filter(v=>v.材料頻率&&v.材料頻率.length).length} 章｜標單別名 ${D.meta.counts.別名}（${D.meta.generated}）`;
 const esc = s => String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const wiName = t => String(t||'').replace(/^工項\s*/,'');
 
@@ -180,7 +185,7 @@ function grouped(items){ const b={}; items.forEach(it=>{(b[it.章碼]=b[it.章�
 // ================= 試驗查核 =================
 function renderCheck(){
   const {items,tests}=LAST;
-  let 命中=0,未建=0,漏編=0,cards='',未建list=[];
+  let 命中=0,未建=0,漏編=0,材料章=0,cards='',未建list=[];
   for(const {code,wi,rows} of grouped(items)){
     if(!wi){未建++;未建list.push(`<tr><td><span class="code">${code}</span></td><td>${rows.length}</td><td class="muted">${esc(rows[0].項目.slice(0,28))}</td></tr>`);continue;}
     命中++;
@@ -197,15 +202,34 @@ function renderCheck(){
       body+=`<tr><td>${esc(t.項目)}</td><td>${esc(t.頻率)}</td><td>${nCell}</td><td>${tg}</td><td class="muted">${esc(t.依據)}</td></tr>`;
     }
     const fam=code!==wi.chapter_code?`（家族→${wi.chapter_code}）`:'';
-    cards+=`<div class="card"><div class="scroll"><table>
-      <tr class="grp"><td colspan="5" class="h ok">✓ <span class="code">${code}</span>${fam} ${esc(wi.title)} <span class="muted">　合計 ${qty||'—'} ${esc(unit)}</span></td></tr>
-      <tr><th>應辦試驗項目</th><th>頻率</th><th>應辦組數</th><th>標單編列</th><th>依據</th></tr>${body}</table></div></div>`;
+    // 試驗庫表：僅在該章有試驗頻率卡時出現（可算組數＋比對漏編）
+    const 試驗table = lib
+      ? `<table><tr><th>應辦試驗項目</th><th>頻率</th><th>應辦組數</th><th>標單編列</th><th>依據</th></tr>${body}</table>`
+      : '';
+    // 材料頻率：來自工項卡 ② 表，屬參考資訊（無機器欄故不算組數、不比對漏編）
+    const mats = wi.材料頻率 || [];
+    if (mats.length) 材料章++;
+    const 材料block = mats.length ? `<details class="mat"${試驗table?'':' open'}>
+      <summary>📋 材料/試驗頻率（工項卡 ②）<span class="muted">　${mats.length} 項・參考用，不計組數</span></summary>
+      <div class="scroll" style="margin-top:8px"><table>
+        <tr><th>項目</th><th>方法/標準</th><th>頻率</th><th>判定/備註</th></tr>
+        ${mats.map(m=>{
+          const 尾=[m.判定,m.備註].filter(Boolean).join('｜');
+          return `<tr><td>${esc(m.項目)}</td><td class="muted">${esc(m.方法)||'—'}</td><td>${esc(m.頻率)||'—'}</td><td class="muted">${esc(尾)||'—'}</td></tr>`;
+        }).join('')}
+      </table></div></details>` : '';
+    const 空 = (!試驗table && !材料block)
+      ? `<p class="muted" style="margin:8px 0 0">本章工項卡未列試驗頻率卡與材料頻率表（多為程序性章節）。</p>` : '';
+    cards+=`<div class="card">
+      <table><tr class="grp"><td colspan="5" class="h ok">✓ <span class="code">${code}</span>${fam} ${esc(wi.title)} <span class="muted">　合計 ${qty||'—'} ${esc(unit)}</span></td></tr></table>
+      ${試驗table?`<div class="scroll">${試驗table}</div>`:''}${材料block}${空}</div>`;
   }
   const summary=`<div class="card"><div class="stat">
     <div class="box"><small>標單章碼</small><b>${grouped(items).length}</b></div>
     <div class="box"><small>對到工項</small><b class="ok">${命中}</b></div>
     <div class="box"><small>未建工項</small><b class="${未建?'miss':''}">${未建}</b></div>
     <div class="box"><small>疑似漏編</small><b class="${漏編?'warn':''}">${漏編}</b></div>
+    <div class="box"><small>材料頻率</small><b>${材料章}</b></div>
     <div class="box"><small>編列試驗</small><b>${tests.length}</b></div></div></div>`;
   const 未建card=未建list.length?`<div class="card"><details><summary class="miss" style="font-weight:600">⚠ 未建工項卡的章碼 ${未建list.length} 個（覆蓋缺口）</summary><div class="scroll" style="margin-top:8px"><table><tr><th>章碼</th><th>項數</th><th>例</th></tr>${未建list.join('')}</table></div></details></div>`:'';
   document.getElementById('out').innerHTML=summary+cards+未建card;
