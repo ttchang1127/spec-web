@@ -154,6 +154,20 @@ function calcN(machine,qty,unit){
   if(u==='m2'&&m.per_m2) return {n:Math.ceil(qty/m.per_m2),note:''};
   if(u==='m2'&&m.per_m2_per_layer) return {n:Math.ceil(qty/m.per_m2_per_layer),note:'×分層數'};
   if(m.per_m2_per_layer) return {n:null,note:'每層每'+m.per_m2_per_layer+'m²（需面積×層數）'};
+  // 階梯式門檻：未達 exempt_below 免驗；達門檻~tier_base 檢驗 1 次；超過 tier_base 每 tier_step 加 1 次
+  // （桃園 02316/02317/02320/02610/02770 等表格常見型；舊鍵 per_*_after_first_* 僅存步長、
+  //   遺失免驗門檻與基準值故只能提示，本鍵組參數完整因此可實算）
+  if(m.tier_base && m.tier_step){
+    const rule=(m.tier_unit||'').toLowerCase().replace('㎡','m2').replace('㎥','m3');
+    const desc=(m.exempt_below?'<'+m.exempt_below+' 免驗；':'')+'≤'+m.tier_base+' 取 1 次、超過每 '+m.tier_step+' 加 1';
+    // 規則單位與標單單位不符時不得計算（否則會把 m³ 數量套進 m² 規則）
+    if(rule && u && rule!==u) return {n:null,note:desc+'（規則單位 '+m.tier_unit+'，標單為 '+unit+'，需換算）'};
+    if(rule && !u) return {n:null,note:desc+'（需 '+m.tier_unit+' 數量）'};
+    if(m.exempt_below && qty < m.exempt_below)
+      return {n:0,note:'<'+m.exempt_below+' 免驗（憑合格證明）'};
+    const n = qty <= m.tier_base ? 1 : 1 + Math.ceil((qty - m.tier_base)/m.tier_step);
+    return {n,note:desc};
+  }
   // 公路局：每 N 單位取樣（線性/門檻）＋免驗門檻＋抽組倍數＋餘數併批
   if(m.per_unit){
     if(m.exempt_below && qty < m.exempt_below)
