@@ -138,7 +138,10 @@ function parseWB(wb){
       const find=re=>hdr.findIndex(h=>re.test(h));
       const iN=find(/項\s*目|品名|說明/), iU=find(/單\s*位/), iQ=find(/數\s*量/), iC=find(/編\s*碼/);
       for(const r of aoa.slice(hi+1)){ if(!r) continue;
-        const m=String(r[iC]||'').trim().match(/^(\d{5})/); const name=String(r[iN]||'').trim();
+        // 章碼尾碼：台電為 5 碼＋AA（02551AA/02555AA/02556AA），單 A 為輸變電處版。
+        // 不含尾碼時行為與原 /^(\d{5})/ 相同；與 spec_kb_export.py 之 CODE_RE 保持一致，
+        // 否則台電標單會被截成 5 碼而查無工項、全數落入「未建工項」。
+        const m=String(r[iC]||'').trim().match(/^(\d{5}A{0,2})/); const name=String(r[iN]||'').trim();
         if(m&&name){ const q=parseFloat(String(r[iQ]||'').replace(/[,，\s]/g,''));
           items.push({章碼:m[1],項目:name,單位:String(r[iU]||'').trim(),數量:isNaN(q)?null:q}); }
       }
@@ -148,8 +151,38 @@ function parseWB(wb){
   }
   return {items, tests:[...tests]};
 }
+// 標單單位正規化。只合併「確為同一物理量」的寫法；
+// 座/支/處/區間/廠牌等計數單位一律不互相合併（座≠處，語意不同）。
+function normU(s){
+  const x=String(s||'').trim().toLowerCase()
+    .replace(/[\s()（）]/g,'')
+    .replace(/²/g,'2').replace(/³/g,'3')
+    .replace('㎡','m2').replace('㎥','m3');
+  const SYN={'公尺':'m','米':'m','ｍ':'m','m':'m',
+             '平方公尺':'m2','平方米':'m2','m2':'m2',
+             '立方公尺':'m3','立方米':'m3','m3':'m3',
+             '公噸':'t','噸':'t','ton':'t','t':'t',
+             '公斤':'kg','kg':'kg'};
+  return SYN[x]||x;
+}
+// 工項卡 → 其所有試驗頻率卡（schema v0.2 起為陣列）。
+// 保留對舊格式（單一字串）的容錯，避免載到舊 spec_data.js 時整頁壞掉。
+// 過濾掉試驗庫中不存在者（export 端另有懸空引用告警）。
+function libsOf(wi){
+  const raw = wi && wi.試驗頻率卡;
+  const ids = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+  return ids.map(id=>[id, D.試驗庫[id]]).filter(x=>x[1]);
+}
 function calcN(machine,qty,unit){
-  const m=machine||{}, u=(unit||'').toLowerCase().replace('㎡','m2').replace('㎥','m3');
+  const m=machine||{}, u=normU(unit);
+  // qty_unit：宣告本列規則所需之標單單位。**有宣告才檢查**，未宣告維持舊行為（向後相容）。
+  // 未加此鍵前 per_unit 完全不驗單位：250「M」的管路項目會被「1 組/座」算成 250 組，
+  // 數字是錯的卻不報錯。台電三章因基底單位異質（座/公尺/支/區間/廠牌）而特別明顯。
+  if(m.qty_unit){
+    const want=normU(m.qty_unit);
+    if(!u)       return {n:null,note:'需以「'+m.qty_unit+'」為單位之數量'};
+    if(want!==u) return {n:null,note:'規則單位為「'+m.qty_unit+'」，標單為「'+unit+'」，需換算'};
+  }
   if(u==='m3'&&m.per_m3) return {n:Math.ceil(qty/m.per_m3),note:m.per_day_min?'另每日≥'+m.per_day_min+'（取大值）':''};
   if(u==='m2'&&m.per_m2) return {n:Math.ceil(qty/m.per_m2),note:''};
   if(u==='m2'&&m.per_m2_per_layer) return {n:Math.ceil(qty/m.per_m2_per_layer),note:'×分層數'};
@@ -158,7 +191,7 @@ function calcN(machine,qty,unit){
   // （桃園 02316/02317/02320/02610/02770 等表格常見型；舊鍵 per_*_after_first_* 僅存步長、
   //   遺失免驗門檻與基準值故只能提示，本鍵組參數完整因此可實算）
   if(m.tier_base && m.tier_step){
-    const rule=(m.tier_unit||'').toLowerCase().replace('㎡','m2').replace('㎥','m3');
+    const rule=normU(m.tier_unit);   // 與 qty_unit 共用同一套正規化
     const desc=(m.exempt_below?'<'+m.exempt_below+' 免驗；':'')+'≤'+m.tier_base+' 取 1 次、超過每 '+m.tier_step+' 加 1';
     // 規則單位與標單單位不符時不得計算（否則會把 m³ 數量套進 m² 規則）
     if(rule && u && rule!==u) return {n:null,note:desc+'（規則單位 '+m.tier_unit+'，標單為 '+unit+'，需換算）'};
@@ -203,23 +236,25 @@ function renderCheck(){
   for(const {code,wi,rows} of grouped(items)){
     if(!wi){未建++;未建list.push(`<tr><td><span class="code">${code}</span></td><td>${rows.length}</td><td class="muted">${esc(rows[0].項目.slice(0,28))}</td></tr>`);continue;}
     命中++;
-    const lib=D.試驗庫[wi.試驗頻率卡];
+    const libs=libsOf(wi);
     const uC={};rows.forEach(r=>{if(r.單位)uC[r.單位]=(uC[r.單位]||0)+1;});
     const unit=Object.keys(uC).sort((a,b)=>uC[b]-uC[a])[0]||'';
     const qty=rows.filter(r=>r.單位===unit).reduce((s,r)=>s+(r.數量||0),0);
-    let body='';
-    if(lib) for(const t of lib.試驗項目){
-      const c=calcN(t.機器,qty,unit);
-      const nCell=c.n!=null?`<span class="n ok">${c.n}</span> 組`:`<span class="warn">${esc(c.note||'—')}</span>`;
-      let tg='<span class="muted">—</span>';
-      if(t.關鍵字&&t.關鍵字.length){const hit=tests.some(nm=>t.關鍵字.some(k=>nm.includes(k)));tg=hit?'<span class="tag y">已編列</span>':'<span class="tag n">⚠ 漏編</span>';if(!hit)漏編++;}
-      body+=`<tr><td>${esc(t.項目)}</td><td>${esc(t.頻率)}</td><td>${nCell}</td><td>${tg}</td><td class="muted">${esc(t.依據)}</td></tr>`;
+    // 一章可對多張試驗頻率卡 → 逐卡一張表，並標明來源卡名（單卡時不加標題以免多餘）。
+    let 試驗table='';
+    for(const [lid,lib] of libs){
+      let body='';
+      for(const t of lib.試驗項目){
+        const c=calcN(t.機器,qty,unit);
+        const nCell=c.n!=null?`<span class="n ok">${c.n}</span> 組`:`<span class="warn">${esc(c.note||'—')}</span>`;
+        let tg='<span class="muted">—</span>';
+        if(t.關鍵字&&t.關鍵字.length){const hit=tests.some(nm=>t.關鍵字.some(k=>nm.includes(k)));tg=hit?'<span class="tag y">已編列</span>':'<span class="tag n">⚠ 漏編</span>';if(!hit)漏編++;}
+        body+=`<tr><td>${esc(t.項目)}</td><td>${esc(t.頻率)}</td><td>${nCell}</td><td>${tg}</td><td class="muted">${esc(t.依據)}</td></tr>`;
+      }
+      const cap = libs.length>1 ? `<div class="muted" style="margin:10px 0 4px">📕 ${esc(lid)}</div>` : '';
+      試驗table += cap+`<table><tr><th>應辦試驗項目</th><th>頻率</th><th>應辦組數</th><th>標單編列</th><th>依據</th></tr>${body}</table>`;
     }
     const fam=code!==wi.chapter_code?`（家族→${wi.chapter_code}）`:'';
-    // 試驗庫表：僅在該章有試驗頻率卡時出現（可算組數＋比對漏編）
-    const 試驗table = lib
-      ? `<table><tr><th>應辦試驗項目</th><th>頻率</th><th>應辦組數</th><th>標單編列</th><th>依據</th></tr>${body}</table>`
-      : '';
     // 材料頻率：來自工項卡 ② 表，屬參考資訊（無機器欄故不算組數、不比對漏編）
     const mats = wi.材料頻率 || [];
     if (mats.length) 材料章++;
@@ -269,8 +304,9 @@ function planHTML(){
     const qty=rows.filter(r=>r.單位===unit).reduce((s,r)=>s+(r.數量||0),0);
     ch1rows+=`<tr><td><span class="code">${code}</span></td><td>${wi?esc(wiName(wi.title)):`<span class="warn">${esc(rows[0].項目.slice(0,20))}（未建卡）</span>`}</td><td>${rows.length}</td><td>${qty?qty.toLocaleString():'—'} ${esc(unit)}</td></tr>`; }
   // §五 材料品質標準
-  let ch5=''; for(const {code,wi} of matched){ const lib=D.試驗庫[wi.試驗頻率卡]; if(!lib) continue;
-    for(const t of lib.試驗項目) ch5+=`<tr><td>${esc(wiName(wi.title))}</td><td>${esc(t.項目)}</td><td>${esc(t.判定||'—')}</td><td>${esc(t.頻率)}</td><td>${esc(t.依據)}</td></tr>`; }
+  let ch5=''; for(const {code,wi} of matched){
+    for(const [,lib] of libsOf(wi))          // 多張試驗頻率卡全部納入第五章
+      for(const t of lib.試驗項目) ch5+=`<tr><td>${esc(wiName(wi.title))}</td><td>${esc(t.項目)}</td><td>${esc(t.判定||'—')}</td><td>${esc(t.頻率)}</td><td>${esc(t.依據)}</td></tr>`; }
   // §七 施工抽查 + 停留點
   let ch7='', holds='';
   for(const {code,wi} of matched){
