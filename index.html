@@ -304,9 +304,22 @@ function planHTML(){
     const qty=rows.filter(r=>r.單位===unit).reduce((s,r)=>s+(r.數量||0),0);
     ch1rows+=`<tr><td><span class="code">${code}</span></td><td>${wi?esc(wiName(wi.title)):`<span class="warn">${esc(rows[0].項目.slice(0,20))}（未建卡）</span>`}</td><td>${rows.length}</td><td>${qty?qty.toLocaleString():'—'} ${esc(unit)}</td></tr>`; }
   // §五 材料品質標準
-  let ch5=''; for(const {code,wi} of matched){
-    for(const [,lib] of libsOf(wi))          // 多張試驗頻率卡全部納入第五章
-      for(const t of lib.試驗項目) ch5+=`<tr><td>${esc(wiName(wi.title))}</td><td>${esc(t.項目)}</td><td>${esc(t.判定||'—')}</td><td>${esc(t.頻率)}</td><td>${esc(t.依據)}</td></tr>`; }
+  // 來源兩層：① 試驗頻率卡（已結構化、含機讀欄）② 工項卡 ② 材料頻率（無試驗卡時回退）
+  // ⚠ 未加回退前，第五章只看得到有試驗頻率卡之章；全庫 204 章有 ② 但無試驗卡，
+  //   其材料品質標準**完全不會出現在生成的監造計畫裡**。
+  let ch5='', ch5_lib=0, ch5_mat=0;
+  for(const {code,wi} of matched){
+    const libs=libsOf(wi);
+    if(libs.length){
+      for(const [,lib] of libs)              // 多張試驗頻率卡全部納入第五章
+        for(const t of lib.試驗項目){ ch5_lib++;
+          ch5+=`<tr><td>${esc(wiName(wi.title))}</td><td>${esc(t.項目)}</td><td>${esc(t.判定||'—')}</td><td>${esc(t.頻率)}</td><td>${esc(t.依據)}</td><td><span class="tag y">試驗頻率卡</span></td></tr>`; }
+    } else {
+      for(const m of (wi.材料頻率||[])){ ch5_mat++;
+        const 判=[m.判定,m.備註].filter(Boolean).join('｜');
+        ch5+=`<tr><td>${esc(wiName(wi.title))}</td><td>${esc(m.項目)}</td><td>${esc(判)||'—'}</td><td>${esc(m.頻率)||'—'}</td><td class="muted">${esc(m.方法)||'—'}</td><td><span class="tag n">工項卡②</span></td></tr>`; }
+    }
+  }
   // §七 施工抽查 + 停留點
   let ch7='', holds='';
   for(const {code,wi} of matched){
@@ -333,7 +346,8 @@ function planHTML(){
     <h2>第四章　施工計畫審查程序</h2>${OL(BOILER.s4)}
     <h2>第五章　材料與設備抽驗程序及標準</h2>${OL(BOILER.s51)}
     <h3>5.1 材料品質標準（依對到工項自動生成）</h3>
-    <table><tr><th>材料/工項</th><th>試驗項目</th><th>抽驗標準</th><th>抽驗頻率</th><th>依據</th></tr>${ch5||'<tr><td colspan=5 class=muted>（標單未對到已建工項）</td></tr>'}</table>
+    <p class="muted">來源：<span class="tag y">試驗頻率卡</span> ${ch5_lib} 列（已結構化、可算組數）｜<span class="tag n">工項卡②</span> ${ch5_mat} 列（該章尚無試驗頻率卡，取自工項卡材料頻率表；<b>頻率文字未經機讀結構化，須人工核算組數</b>）</p>
+    <table><tr><th>材料/工項</th><th>試驗項目</th><th>抽驗標準</th><th>抽驗頻率</th><th>依據/方法</th><th>來源</th></tr>${ch5||'<tr><td colspan=6 class=muted>（標單未對到已建工項）</td></tr>'}</table>
     <h3>5.2 應用表單</h3><ul><li>表5.1 材料設備送審管制總表</li><li>表5.2 材料設備檢（試）驗管制總表</li></ul>
     <h2>第六章　設備功能運轉測試程序及標準</h2>${OL(BOILER.s6)}
     <h2>第七章　施工抽查程序及標準</h2>${OL(BOILER.s71)}
