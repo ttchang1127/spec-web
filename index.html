@@ -61,6 +61,7 @@
 .tplnote{border-left:3px solid var(--line);padding:2px 0 2px 9px;margin:6px 0;color:var(--sub);font-size:13px}
 .condbox{border:1px dashed var(--err);border-radius:6px;padding:8px 10px;margin:8px 0}
 .genmiss{color:var(--warn);font-weight:600}
+.pfilled{background:rgba(47,133,90,.16);border-radius:4px;padding:0 4px}
 </style>
 </head>
 <body>
@@ -109,6 +110,7 @@
   </div>
 
   <div id="picker" style="display:none"></div>
+  <div id="params" style="display:none"></div>
   <div id="out"></div>
   <p class="foot">v1.0 ｜ 燃料 spec_data.js（由 <span class="code">spec_kb_export.py</span> 從施工規範知識庫編譯）｜ 靜態 client-side</p>
 </div>
@@ -454,7 +456,10 @@ function mdInline(x){
   return esc(x)
     .replace(/\[\[[^\]|]*\|([^\]]*)\]\]/g,'$1')      // [[卡|別名]] → 別名（.doc 不需連結）
     .replace(/\[\[([^\]]*)\]\]/g,'$1')
-    .replace(/\{\{參數:([^}|]*)(?:\|[^}]*)?\}\}/g,(m,f)=>`<span class="ph">［${esc(f.trim())}］</span>`)
+    .replace(/\{\{參數:([^}|]*)(?:\|[^}]*)?\}\}/g,(m,f)=>{
+      const nm=f.trim(), v=paramValue(nm);
+      return v ? `<span class="pfilled">${esc(v)}</span>` : `<span class="ph">［${esc(nm)}］</span>`;
+    })
     .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
     .replace(/`([^`]+)`/g,'<span class="code">$1</span>');
 }
@@ -505,6 +510,84 @@ function renderMD(md,ctx,G){
 function chapterBody(n,ctx,G,fallback){
   const c=TPLCH[String(n)];
   return c ? renderMD(c.md,ctx,G) : fallback;
+}
+
+// ================= 參數填寫（{{參數:}} → 實際值） =================
+// 74 個不重複參數／96 次出現。填一次即套用同名全部出現處。
+// 🔴 保存年限在第九章「品質紀錄總表」出現 12 次（12 種不同紀錄各一列）——
+//    KB 以同一參數名建模，故填一次會全部套同值。多數案件品質紀錄年限一致故可接受，
+//    但各類紀錄年限不同時必須於下載後個別修改；介面已就重複次數提示。
+const PKEY='spec_web_params_v1';
+let PARAMS={};
+try{ PARAMS=JSON.parse(localStorage.getItem(PKEY)||'{}'); }catch(e){ PARAMS={}; }
+function savePARAMS(){ try{ localStorage.setItem(PKEY,JSON.stringify(PARAMS)); }catch(e){} }
+// 已在「案件資料」填過的，不重複要求
+const PMAP={'工程名稱':'pName','主辦機關':'pOwner','監造單位':'pSup'};
+function paramValue(name){
+  const id=PMAP[name];
+  if(id){ const v=(document.getElementById(id)||{}).value||''; if(v) return v; }
+  if(name==='契約金額'){ const P=profile(); if(P.amt!=null) return P.amt.toLocaleString()+' 萬元'; }
+  return (PARAMS[name]||'').trim();
+}
+// 掃出「本次應撰寫章節」實際需要的參數（免列章不必填）
+function paramsNeeded(tier){
+  const out=[];
+  for(const n of [1,2,3,4,5,6,7,8,9]){
+    const c=TPLCH[String(n)]; if(!c||!tier.chs.has(n)) continue;
+    let sec=''; const seen={};
+    for(const line of c.md.split('\n')){
+      const h=line.match(/^##\s+(.*)$/);
+      if(h) sec=h[1].replace(/〔[^〕]*〕\s*$/,'').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}️]/gu,'').trim();
+      for(const m of line.matchAll(/\{\{參數:([^}|]*)(?:\|[^}]*)?\}\}/g)){
+        const nm=m[1].trim();
+        if(seen[nm]){ seen[nm].n++; continue; }
+        seen[nm]={ch:n,sec,name:nm,n:1}; out.push(seen[nm]);
+      }
+    }
+  }
+  return out;
+}
+const ROLES=['計畫主持人','主任監造技師','專業監造人員','品管人員','現場監工','測量人員'];
+function renderParams(){
+  const el=document.getElementById('params'); if(!el) return;
+  if(MODE!=='plan'||!LAST){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display='';
+  const tier=tierOf(profile().amt,profile().mech);
+  const need=paramsNeeded(tier);
+  const filled=need.filter(p=>paramValue(p.name)).length;
+  const byCh={}; need.forEach(p=>{(byCh[p.ch]=byCh[p.ch]||[]).push(p);});
+  let h=`<div class="card"><details ${filled<need.length?'open':''}>
+    <summary><b>✍ 待填參數</b> <span class="muted">已填 ${filled} / ${need.length}（僅列出本案應撰寫章節所需；填一次即套用同名全部出現處）</span></summary>
+    <p class="muted" style="margin:8px 0">已在上方「案件資料」填過的欄位會自動帶入，此處不重複要求。輸入即時反映到下方計畫。</p>
+    <datalist id="roleList">${ROLES.map(r=>`<option value="${r}">`).join('')}</datalist>`;
+  for(const ch of Object.keys(byCh).sort((a,b)=>a-b)){
+    h+=`<h4 style="margin:14px 0 6px">第${'〇一二三四五六七八九'[ch]}章　${esc(CH_NAME[ch])}</h4>
+      <table><tr><th style="width:200px">參數</th><th style="width:220px">值</th><th>出現節次</th></tr>`;
+    for(const p of byCh[ch]){
+      const auto=PMAP[p.name]||p.name==='契約金額';
+      const v=paramValue(p.name);
+      const dl=/^職稱\d+$/.test(p.name)||/職稱$/.test(p.name)?' list="roleList"':'';
+      h+=`<tr><td>${esc(p.name)}${p.n>1?` <span class="tag n">×${p.n}</span>`:''}</td>
+        <td>${auto
+          ? `<span class="muted">${v?esc(v):'（請於上方案件資料填寫）'}</span>`
+          : `<input class="pinput" data-p="${esc(p.name)}" value="${esc(PARAMS[p.name]||'')}"${dl} style="width:100%;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)">`}</td>
+        <td class="muted">${esc(p.sec)}${p.n>1?`（本章 ${p.n} 處，填一次全部套用${p.name==='保存年限'?'；各類紀錄年限不同時請於下載後個別修改':''}）`:''}</td></tr>`;
+    }
+    h+='</table>';
+  }
+  h+=`<div class="row" style="margin-top:12px"><button id="pClear">✕ 清除所有參數</button>
+      <span class="muted">參數存於本機瀏覽器，換案件請先清除</span></div></details></div>`;
+  el.innerHTML=h;
+  el.querySelectorAll('.pinput').forEach(inp=>{
+    inp.addEventListener('input',()=>{
+      PARAMS[inp.dataset.p]=inp.value; savePARAMS();
+      document.getElementById('out').innerHTML=`<div class="card">${planHTML()}</div>`;   // 只重繪計畫，保留輸入焦點
+      const sm=el.querySelector('summary .muted');
+      if(sm){ const nd=paramsNeeded(tier); sm.textContent=`已填 ${nd.filter(x=>paramValue(x.name)).length} / ${nd.length}（僅列出本案應撰寫章節所需；填一次即套用同名全部出現處）`; }
+    });
+  });
+  const cl=el.querySelector('#pClear');
+  if(cl) cl.onclick=()=>{ PARAMS={}; savePARAMS(); renderParams(); renderPlan(); };
 }
 
 function planHTML(){
@@ -595,6 +678,7 @@ function planHTML(){
   </div>`;
 }
 function renderPlan(){
+  renderParams();
   document.getElementById('out').innerHTML=`<div class="card">${planHTML()}</div>`;
   document.getElementById('dl').style.display='';
 }
@@ -730,8 +814,10 @@ function applyPicks(){
 
 function render(){
   const pk=document.getElementById('picker'), out=document.getElementById('out');
-  if(MODE==='pick'){ pk.style.display=''; out.innerHTML=''; renderPicker(); return; }
+  const pr=document.getElementById('params');
+  if(MODE==='pick'){ pk.style.display=''; pr.style.display='none'; out.innerHTML=''; renderPicker(); return; }
   pk.style.display='none';
+  if(MODE!=='plan'){ pr.style.display='none'; pr.innerHTML=''; }
   if(!LAST){ out.innerHTML='<div class="card muted">尚無工項清單。可<b>上傳標單</b>，或按「🧩 選工項（無標單）」以分項工程範本勾選。</div>'; return; }
   MODE==='plan'?renderPlan():renderCheck();
 }
