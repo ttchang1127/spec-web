@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>監造試驗查核 / 計畫產生</title>
-<script src="spec_data.js"></script>
+<script src="spec_data.js?v=2380469c0ce2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root{ --bg:#f7f8fa; --card:#fff; --ink:#1c2330; --sub:#5b6472; --line:#e3e7ee;
@@ -94,8 +94,12 @@
 <script>
 const D = window.SPEC_DATA;
 let LAST=null, MODE='check';
-document.getElementById('meta').textContent =
-  `工項 ${Object.keys(D.工項).length} 章碼｜試驗庫 ${D.meta.counts.試驗庫}｜材料頻率 ${Object.values(D.工項).filter(v=>v.材料頻率&&v.材料頻率.length).length} 章｜標單別名 ${D.meta.counts.別名}（${D.meta.generated}）`;
+// 規則來源列同時當作「載入了哪一版資料」的可視指標——
+// index.html 與 spec_data.js 各自快取，版本錯配時這行會露出舊日期/舊計數。
+document.getElementById('meta').innerHTML =
+  `工項 ${Object.keys(D.工項).length} 章碼｜試驗庫 ${D.meta.counts.試驗庫}｜材料頻率 ${Object.values(D.工項).filter(v=>v.材料頻率&&v.材料頻率.length).length} 章｜標單別名 ${D.meta.counts.別名}`
+  + `｜分項工程範本 ${D.meta.counts.分項工程範本 ?? '<b style="color:var(--bad)">無（spec_data.js 為舊版，請強制重新整理）</b>'}`
+  + `（資料 ${D.meta.generated}）`;
 const esc = s => String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const wiName = t => String(t||'').replace(/^工項\s*/,'');
 
@@ -441,6 +445,16 @@ function renderPicker(){
   if(!PICK.src){ h+='<p class="muted" style="margin-top:14px">↑ 先選規範源，才會列出可用的分項工程。</p></div>'; el.innerHTML=h; bindPicker(); return; }
 
   // Step 2 範本
+  // 🔴 空清單必須大聲失敗。先前只畫表頭不畫列，看起來像「這個源沒有範本」，
+  //    實際是 spec_data.js 舊版沒有「分項工程範本」鍵（瀏覽器分別快取 index.html 與 spec_data.js）。
+  //    畫得出表頭卻沒資料 ＝ 儀表板說謊，是本專案反覆修掉的錯誤型態。
+  if(!Object.keys(TPL).length){
+    h+='<div class="card miss" style="margin-top:16px"><b>⚠ 載入的 spec_data.js 沒有「分項工程範本」資料</b>'
+     +'<p class="muted" style="margin:6px 0 0">目前 spec_data 產生日期：<span class="code">'+esc(D.meta&&D.meta.generated||'未知')+'</span>。'
+     +'多半是瀏覽器仍在用舊版 spec_data.js（它與 index.html 各自快取）。'
+     +'請<b>強制重新整理</b>（Mac：⌘⇧R／Windows：Ctrl+F5），或於網址列加 <span class="code">?v='+Date.now()+'</span> 後重載。</p></div></div>';
+    el.innerHTML=h; bindPicker(); return;
+  }
   h+='<h4 style="margin:18px 0 6px">② 勾選分項工程<span class="muted" style="font-weight:400"> — 可複選，之後可再組合</span></h4>'
    +'<table><tr><th style="width:38px"></th><th>分項工程</th><th style="width:96px">本源可用</th><th>前置範本</th></tr>';
   for(const [id,v] of tplList()){
