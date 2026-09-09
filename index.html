@@ -440,6 +440,95 @@ function evalCond(text,c){
   return null;
 }
 
+// --- 分項施工計畫清單（第四章 §4.1）：欄位依卡片宣告 ---
+function subPlanTable(matched){
+  const d=paramValue('分項送審前置日數');
+  const dcell=d?`<span class="pfilled">${esc(d)}</span>`:'<span class="ph">［分項送審前置日數］</span>';
+  let rows='',i=0;
+  for(const {code,wi} of matched){ i++;
+    rows+=`<tr><td style="text-align:right">${i}</td><td>${esc(wiName(wi.title))}</td>`
+      +`<td><span class="code">${code}</span></td><td>${esc(wi.規範源||'')}</td>`
+      +`<td></td><td style="text-align:right">${(wi.停留點||[]).length}</td></tr>`;
+  }
+  return `<p class="muted">依本案工項自動列出，共 ${i} 項；<b>送審日期</b>欄依實際預定進度填列。</p>`
+    +`<table><tr><th>#</th><th>分項工程</th><th>章碼</th><th>規範源</th><th>應於施工前 ${dcell} 日送審</th><th>對應停留點數</th></tr>`
+    +(rows||'<tr><td colspan=6 class=muted>（未對到已建工項）</td></tr>')+'</table>';
+}
+
+// --- 品質紀錄總表（第九章 §9.2.1）：彙整「本案實際撰寫章節」之應用表單 ---
+// 🔴 卡片原有靜態表列了第三~第八章各表，但第八章在 1,000~5,000 萬級距是免列的——
+//    靜態表會讓一份不含第八章的計畫，在品質紀錄總表裡出現「第八章 品質稽核紀錄」。
+//    改為由實際納入之章節彙整，免列章的表單自動不出現。
+function formsOf(ch){
+  const c=TPLCH[String(ch)]; if(!c) return [];
+  const out=[]; let on=false;
+  for(const line of c.md.split('\n')){
+    const h=line.match(/^##\s+(.*)$/);
+    if(h){ on=/應用表單/.test(h[1]); continue; }
+    if(!on) continue;
+    let m;
+    // 表格列：| 表 3.1 | 品質計畫審查意見表 |
+    if(m=line.match(/^\|\s*(表\s*[\d.．／/]+)\s*\|\s*([^|]+?)\s*\|/)) { out.push({no:m[1].trim(),name:m[2].trim()}); continue; }
+    // 條列：- **表 5.1** （○○工程）材料設備送審管制總表
+    if(m=line.match(/^\s*[-*]\s+\*{0,2}(表\s*[\d.．／/]+)\*{0,2}\s*(.*)$/)) { out.push({no:m[1].trim(),name:m[2].replace(/^\*+|\*+$/g,'').trim()}); continue; }
+  }
+  return out;
+}
+// 全案共通紀錄（非某一章之應用表單，來源為作業要點）
+const GLOBAL_RECS=[
+  {ch:'全案',no:'附表四',name:'施工日誌（作業要點 §11②）',when:'每日'},
+  {ch:'全案',no:'附表五',name:'監造報表（作業要點 §11⑮）',when:'依規定期間'},
+  {ch:'全案',no:'—',name:'會議紀錄（協調會、工務會報）',when:'每次'},
+  {ch:'全案',no:'—',name:'施工照片（含不易察看作業之施工前中後）',when:'持續'},
+];
+const WHEN={3:'品質計畫送審時',4:'施工計畫送審時',5:'材料設備送審／每次抽驗',7:'每次抽查',8:'每次稽核'};
+function qualityRecordTable(tier){
+  const yr=paramValue('保存年限');
+  const cell=yr?`<span class="pfilled">${esc(yr)}</span>`:'<span class="ph">［保存年限］</span>';
+  let rows='',n=0;
+  for(const ch of [1,2,3,4,5,6,7,8,9]){
+    if(!tier.chs.has(ch)) continue;
+    for(const f of formsOf(ch)){ n++;
+      rows+=`<tr><td>第${'〇一二三四五六七八九'[ch]}章</td><td>${esc(f.no)}</td><td>${esc(f.name)}</td><td>${esc(WHEN[ch]||'依作業辦理')}</td><td>${cell}</td></tr>`; }
+  }
+  if(tier.chs.has(7)) { n++; rows+=`<tr><td>第七章</td><td>—</td><td><b>檢驗停留點查驗紀錄</b></td><td>每一停留點</td><td>${cell}</td></tr>`; }
+  for(const g of GLOBAL_RECS){ n++;
+    rows+=`<tr><td>${g.ch}</td><td>${esc(g.no)}</td><td>${esc(g.name)}</td><td>${esc(g.when)}</td><td>${cell}</td></tr>`; }
+  const 免列=[1,2,3,4,5,6,7,8,9].filter(x=>!tier.chs.has(x));
+  return `<p class="muted">由本案<b>實際撰寫之章節</b>彙整，共 ${n} 項。`
+    +(免列.length?`免列之第 ${免列.join('、')} 章其應用表單不列入。`:'')
+    +`</p><table><tr><th>來源章</th><th>表號</th><th>紀錄名稱</th><th>產生時機</th><th>保存年限</th></tr>${rows}</table>`;
+}
+
+// --- 稽核查對表（第八章 §8.2.3）：以工項為列，帶出可由知識庫算出的應辦基準 ---
+function auditTable(matched,G){
+  let rows='',tot=0,unknown=0;
+  for(const {code,wi,rows:src} of matched){
+    const uC={}; (src||[]).forEach(r=>{if(r.單位)uC[r.單位]=(uC[r.單位]||0)+1;});
+    const unit=Object.keys(uC).sort((a,b)=>uC[b]-uC[a])[0]||'';
+    const qty=(src||[]).filter(r=>r.單位===unit).reduce((s,r)=>s+(r.數量||0),0);
+    let items=0,sets=0,計得=true;
+    for(const [,lib] of libsOf(wi)) for(const t of lib.試驗項目){
+      items++; const c=calcN(t.機器,qty,unit);
+      if(c.n==null) 計得=false; else sets+=c.n;
+    }
+    if(!items) for(const m of (wi.材料頻率||[])){ items++; 計得=false; }
+    const hp=(wi.停留點||[]).length;
+    if(計得&&items) tot+=sets; else if(items) unknown++;
+    rows+=`<tr><td><span class="code">${code}</span></td><td>${esc(wiName(wi.title))}</td>`
+      +`<td style="text-align:right">${items?(計得?sets:'<span class="ph">需數量</span>'):'—'}</td>`
+      +`<td></td><td></td>`
+      +`<td style="text-align:right">依抽查標準</td><td></td><td></td>`
+      +`<td style="text-align:right">${hp}</td><td></td></tr>`;
+  }
+  return `<p class="muted">應辦基準由知識庫自動帶出（抽驗組數依第五章頻率×標單數量、停留點數依工項卡①）；`
+    +`<b>實際</b>與<b>達成率</b>欄由監造紀錄填列。`
+    +(unknown?`⚠ 其中 <b>${unknown}</b> 章因無標單數量或頻率未機讀結構化而無法計算組數，須人工核算。`:'')
+    +(tot?`本案可計算之應辦抽驗組數合計 <b>${tot}</b> 組。`:'')
+    +`</p><table><tr><th>章碼</th><th>工項</th><th>應辦抽驗組數</th><th>實際</th><th>達成率</th><th>應辦抽查次數</th><th>實際</th><th>達成率</th><th>停留點數</th><th>已簽認</th></tr>`
+    +(rows||'<tr><td colspan=10 class=muted>（未對到已建工項）</td></tr>')+'</table>';
+}
+
 // --- 生成塊對映：卡片宣告的生成塊 → 已實作之產生內容 ---
 function genBlock(spec,G){
   const t=String(spec||'');
@@ -447,7 +536,9 @@ function genBlock(spec,G){
   if(/材料品質標準表/.test(t))                 return G.ch5;
   if(/施工抽查標準|各工項抽查標準/.test(t))     return G.ch7;
   if(/檢驗停留點清單/.test(t))                 return G.holds;
-  if(/分項施工計畫清單/.test(t))               return G.ch3;
+  if(/分項施工計畫清單/.test(t))               return G.ch4;
+  if(/品質紀錄總表/.test(t))                   return G.ch9;
+  if(/稽核查對表/.test(t))                     return G.ch8;
   return `<p class="genmiss">〔生成塊尚未實作：${esc(t.split('|')[0].trim()||'未命名')}〕<span class="muted">須人工填列</span></p>`;
 }
 
@@ -471,13 +562,26 @@ function renderMD(md,ctx,G){
     if(v===false) return '';
     return `\n<!--COND-->〔條件未判定：${c.trim()||'（空）'}〕\n`+inner+'\n<!--/COND-->\n';
   });
-  const L=md.split('\n'); let out='',tb=null,list=null;
+  const L=md.split('\n'); let out='',tb=null,list=null,skipTable=false;
   const closeList=()=>{ if(list){ out+=`</${list}>`; list=null; } };
   const closeTable=()=>{ if(tb){ out+='</table>'; tb=null; } };
   for(let raw of L){
     const ln=raw.replace(/\s+$/,'');
-    const g=ln.match(/^\{\{生成:([^}]*)\}\}\s*$/);
-    if(g){ closeList();closeTable(); out+=genBlock(g[1],G); continue; }
+    // 🔴 標記可能被反引號包住——第五章材料品質標準表與第七章三個生成塊即如此。
+    //    原正則要求行首為 {{，那四個生成塊會靜默不被替換（卡片照印標記文字、生成內容不出現）。
+    const g=ln.match(/^`?\{\{生成:([^}]*)\}\}`?\s*$/);
+    if(g){ closeList();closeTable(); out+=genBlock(g[1],G); skipTable=true; continue; }
+    // 🔴「範例列（工項＝路基路堤填築…）：」之後的表格是**給讀卡者看的示範資料**，
+    //    不是本案內容。不濾掉的話，一份橋梁案計畫裡會出現路基路堤填築的示範列。
+    //    全庫僅第五、七章各一處，格式一致（第九章「例：`…`」是命名格式說明屬正當內容，不濾）。
+    if(/^\s*(範例|示例)[^：:]*[：:]\s*$/.test(ln)){ closeList();closeTable(); skipTable=true; continue; }
+    // 生成塊之後緊接的靜態表是卡片裡的「欄位示意」，由生成內容取代，否則會輸出兩份
+    //（第一、四、八、九章皆有）。遇到第一個非表格內容即恢復。
+    if(skipTable){
+      if(/^\|/.test(ln)) continue;
+      if(/^\s*$/.test(ln)) continue;
+      skipTable=false;
+    }
     if(/^<!--COND-->/.test(ln)){ closeList();closeTable();
       out+=`<div class="condbox"><span class="tag n">條件未判定</span> <span class="muted">${esc(ln.replace('<!--COND-->',''))}——請自行確認是否適用後保留或刪除</span>`; continue; }
     if(/^<!--\/COND-->/.test(ln)){ closeList();closeTable(); out+='</div>'; continue; }
@@ -641,7 +745,10 @@ function planHTML(){
       <table><tr><th>材料/工項</th><th>試驗項目</th><th>抽驗標準</th><th>抽驗頻率</th><th>依據/方法</th><th>來源</th></tr>${ch5||'<tr><td colspan=6 class=muted>（未對到已建工項）</td></tr>'}</table>`,
     ch7:ch7||'<p class="muted">（未對到已建工項）</p>',
     holds:`<ul>${holds||'<li class=muted>（無）</li>'}</ul>`,
-    ch3:`<ul>${ch3list||'<li class=muted>（未對到已建工項）</li>'}</ul>`
+    ch3:`<ul>${ch3list||'<li class=muted>（未對到已建工項）</li>'}</ul>`,
+    ch9:qualityRecordTable(tier),
+    ch8:auditTable(matched),
+    ch4:subPlanTable(matched)
   };
   const 免列_金額=[1,2,3,4,5,7,8,9].filter(n=>!tier.chs.has(n));
   const 免列_機電=tier.chs.has(6)?[]:[6];
