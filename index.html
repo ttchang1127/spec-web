@@ -88,6 +88,12 @@
         <input id="pSup" placeholder="監造單位" style="flex:1;min-width:160px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)">
         <input id="pCon" placeholder="承攬廠商" style="flex:1;min-width:160px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)">
       </div>
+      <div class="row" style="margin-top:8px;align-items:center">
+        <label style="display:flex;align-items:center;gap:6px">🔴 契約金額
+          <input id="pAmt" type="number" min="0" step="1" placeholder="例 3500" style="width:130px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)"> 萬元</label>
+        <label style="display:flex;align-items:center;gap:6px"><input id="pMech" type="checkbox"> 含運轉類機電設備（增訂第六章）</label>
+      </div>
+      <p class="muted" id="tierNote" style="margin:8px 0 0">契約金額決定<b>要寫哪幾章</b>（作業要點 §8）。留空則產出全九章並標明未判定。</p>
     </details>
     <div class="muted" style="margin-top:10px">規則來源：<span id="meta"></span></div>
   </div>
@@ -130,7 +136,11 @@ const BOILER = {
        '結果管制：檢/試驗結果之合格與不合格處理如表5.2；不合格應辦不合格報告及通知，要求辦理矯正與預防措施並列管改善。',
        '費用：材料設備抽（檢）驗費用依作業要點§13於招標文件單獨量化編列。',
        '變更：變更設計涉材料或工法變更時，即時修訂本章材料品質標準。'],
-  s6: ['本工程屬道路／排水類，無機電設備功能運轉測試項目，本章免列；如契約含機電、號誌、抽水或監控設備，應另訂單機、系統及整體功能試運轉之抽驗程序及標準。'],
+  // ⚠ 原文寫死「本工程屬道路／排水類」，對台電管路案等非道路案是錯誤斷言；
+  //    本章是否列出改由「含運轉類機電設備」開關決定（作業要點 §8），此處只留適用時的內容。
+  s6: ['本章適用於契約含運轉類機電設備（如機電、號誌、抽水或監控設備）之情形，應訂定單機測試、系統測試及整體功能試運轉之抽驗程序及標準。',
+       '測試計畫：廠商應於測試前提送測試計畫（含測試項目、程序、判定標準、儀器校正證明及不合格處理），經監造單位審查同意後辦理。',
+       '結果處置：測試結果應作成紀錄並經監造單位簽認；不合格者應辦不合格報告，完成矯正後重新測試至合格為止。'],
   s71:['檢驗停留點（Hold Point）抽查：隱蔽部分及重要結構施工項目列為停留點，於開工前（函送本監造計畫同時）明確告知廠商檢驗時點；廠商完成自主檢查後提出檢驗申請，經監造單位到場抽查合格，方得進行次一工序。',
        '不定期抽查：對非停留點項目由監造單位不定期抽查，並於施工品質抽查紀錄表簽認。',
        '結果處置：可即時改正之缺失當場通知限期改正並複查；重大缺失或重複性不合格辦不合格報告及通知，要求辦理矯正與預防措施，建立缺失改善管制表定期列管。',
@@ -329,7 +339,55 @@ function renderCheck(){
 // ================= 監造計畫產生（完整九章）=================
 const OL = arr => `<ol>${arr.map(t=>`<li>${esc(t)}</li>`).join('')}</ol>`;
 function profile(){ const g=id=>(document.getElementById(id)||{}).value||'';
-  return {name:g('pName'),no:g('pNo'),owner:g('pOwner'),sup:g('pSup'),con:g('pCon')}; }
+  const amt=parseFloat(String(g('pAmt')).replace(/[,，\s]/g,''));
+  const mech=(document.getElementById('pMech')||{}).checked||false;
+  return {name:g('pName'),no:g('pNo'),owner:g('pOwner'),sup:g('pSup'),con:g('pCon'),
+          amt:isNaN(amt)?null:amt, mech}; }
+
+// ===== 作業要點 §8 金額級距：決定監造計畫要含哪幾章 =====
+// 逐字依據 03_品質管理作業要點_原文 §八（150萬以上須提報監造計畫，內容依金額分三級）：
+//   5000萬以上   ：監造範圍、監造組織、品質計畫審查、施工計畫審查、材料與設備抽驗、施工抽查、品質稽核、文件紀錄管理系統
+//   1000萬~5000萬：同上但【免品質稽核】
+//   150萬~1000萬 ：監造組織、品質計畫審查、施工計畫審查、材料與設備抽驗、施工抽查【免文件紀錄管理系統與品質稽核】
+//                  （原文未列「監造範圍」，故第一章亦免列）
+//   第六章 設備功能運轉測試：【含運轉類機電設備者增訂】——獨立開關，不由金額決定
+// 🔴 未實作前產生器一律吐九章，使 5000 萬以下案件被多寫第八章、150萬~1000萬 多寫三章。
+//    KB 第八章樣板明文：「不得為求章節齊全而硬寫——多寫等於自行加重監造義務」。
+const CH_NAME={1:'監造範圍',2:'監造組織及權責分工',3:'品質計畫審查程序',4:'施工計畫審查程序',
+  5:'材料與設備抽驗程序及標準',6:'設備功能運轉測試程序及標準',7:'施工抽查程序及標準',
+  8:'品質稽核',9:'文件紀錄管理系統'};
+function tierOf(amt,mech){
+  const base=n=>{ const s=new Set(n); if(mech) s.add(6); return s; };
+  if(amt==null) return {key:'未判定',label:'未填契約金額',
+    chs:base([1,2,3,4,5,7,8,9]), warn:'⚠ 未填契約金額，暫以完整九章產出。依作業要點 §8，5,000 萬以下應免列部分章節——定稿前務必填入金額重新產生。'};
+  if(amt<150) return {key:'<150萬',label:'未達 150 萬',chs:base([]),
+    warn:'⛔ 契約金額未達 150 萬，依作業要點 §8 <b>不須提報監造計畫</b>。'};
+  if(amt<1000) return {key:'150萬~1000萬',label:'150 萬 ~ 1,000 萬',chs:base([2,3,4,5,7]),
+    warn:'依作業要點 §8，本級距<b>免列第一章監造範圍、第八章品質稽核、第九章文件紀錄管理系統</b>。'};
+  if(amt<5000) return {key:'1000萬~5000萬',label:'1,000 萬 ~ 5,000 萬',chs:base([1,2,3,4,5,7,9]),
+    warn:'依作業要點 §8，本級距<b>免列第八章品質稽核</b>。'};
+  return {key:'≥5000萬',label:'5,000 萬以上',chs:base([1,2,3,4,5,7,8,9]),
+    warn:'依作業要點 §8，本級距須撰寫全部章節。'};
+}
+// 免列章的呈現：保留章號並標明依據，不刪除前移。
+// 依 KB [[監造計畫_台電輸電管路_骨架]] §② 對同型問題之裁示——
+// 「保留章號標『略』比刪除前移更安全（與工程會九章對位不會錯亂）」。
+function chapterHTML(n,tier,body){
+  const t=`第${'〇一二三四五六七八九'[n]}章　${CH_NAME[n]}`;
+  if(tier.chs.has(n)) return `<h2>${t}</h2>${body}`;
+  const why = n===6
+    ? '本工程未含運轉類機電設備，依作業要點 §8「含運轉類機電設備者增訂」，本章免列。'
+    : `本案契約金額級距為 <b>${esc(tier.label)}</b>，依作業要點 §8 本章免列。`;
+  return `<h2 style="opacity:.6">${t}<span class="tag n" style="margin-left:8px">免列</span></h2>`
+       + `<p class="muted">${why}保留章號以維持與工程會九章骨架之對位，<b>不重新編號</b>；本章不撰寫內容，避免自行加重監造義務。</p>`;
+}
+function updateTierNote(){
+  const P=profile(), t=tierOf(P.amt,P.mech), el=document.getElementById('tierNote');
+  if(!el) return;
+  const inc=[...t.chs].sort((a,b)=>a-b);
+  el.innerHTML=`級距：<b>${esc(t.label)}</b>｜應撰寫 ${inc.length} 章`
+    +(inc.length?`（第 ${inc.join('、')} 章）`:'')+`<br>${t.warn}`;
+}
 
 function planHTML(){
   const all=grouped(LAST.items), matched=all.filter(x=>x.wi), P=profile();
@@ -373,30 +431,52 @@ function planHTML(){
   }
   // §三 一級品管文件（對到工項清單）
   const ch3list=matched.map(({code,wi})=>`<li>${esc(wiName(wi.title))}（${code}）：品質管理標準／自主檢查表／施工流程圖</li>`).join('');
+  const tier=tierOf(P.amt,P.mech);
+  // 免列有兩種成因，須分開陳述——第六章由「含運轉類機電設備」開關決定，與金額級距無關。
+  // 混在同一句會讓讀者以為第六章也是金額造成的，追溯依據時會找錯條文。
+  const 免列_金額=[1,2,3,4,5,7,8,9].filter(n=>!tier.chs.has(n));
+  const 免列_機電=tier.chs.has(6)?[]:[6];
+  const banner=`<div style="border:1px solid var(--line);border-left:4px solid var(--accent);padding:10px 12px;margin:10px 0;border-radius:6px">
+    <b>章節組成依據：公共工程施工品質管理作業要點 §8</b><br>
+    <span class="muted">契約金額 ${P.amt==null?'<b>未填</b>':'<b>'+P.amt.toLocaleString()+'</b> 萬元'}｜級距 <b>${esc(tier.label)}</b>｜應撰寫 <b>${tier.chs.size}</b> 章</span><br>
+    <span class="muted">${tier.warn}</span>
+    ${免列_金額.length?`<br><span class="muted">‧ 依<b>金額級距</b>免列：第 ${免列_金額.join('、')} 章</span>`:''}
+    ${免列_機電.length?`<br><span class="muted">‧ 依<b>是否含運轉類機電設備</b>免列：第 6 章（與金額級距無關）</span>`:''}
+    </div>`;
+
+  // 未達 150 萬：作業要點 §8 不須提報監造計畫，不應吐出九個「免列」標題。
+  if(!tier.chs.size) return `<div class="plan">${head}
+    <div class="card miss" style="margin-top:12px"><b>⛔ 本案不須提報監造計畫</b>
+    <p class="muted" style="margin:6px 0 0">契約金額 <b>${P.amt==null?'—':P.amt.toLocaleString()}</b> 萬元，未達 150 萬。
+    依公共工程施工品質管理作業要點 §8，<b>150 萬以上</b>始須提報監造計畫。
+    如契約另有約定或機關另有要求，請填入實際金額或依契約辦理。</p></div>
+    <p class="muted">※ 已對到之工項與試驗頻率資料仍可於「🔍 試驗查核」模式查閱。</p></div>`;
+
   return `<div class="plan">
-    <p class="muted">※ 依監造計畫製作綱要九章骨架生成：常數段＝綱要標準文字；${'＃'}表格數值＝施工規範知識庫（可追溯至章碼/CNS/原文）。⑥機電運轉道路案免列。請依契約與實際工項增修後定稿。</p>
+    <p class="muted">※ 依監造計畫製作綱要九章骨架生成：常數段＝綱要標準文字；表格數值＝施工規範知識庫（可追溯至章碼/CNS/原文）。請依契約與實際工項增修後定稿。</p>
     ${head}
-    <h2>第一章　監造範圍</h2>${OL(BOILER.s1)}
-    <h3>1.1 主要施工項目及數量（依標單彙整）</h3>
-    <table><tr><th>章碼</th><th>工項</th><th>標單項數</th><th>合計數量</th></tr>${ch1rows||'<tr><td colspan=4 class=muted>（未載入標單）</td></tr>'}</table>
-    <h2>第二章　監造組織及權責分工</h2>${OL(BOILER.s2)}
-    <p class="muted">〔監造組織架構圖與人員配置表：依實際到位人員填列〕</p>
-    <h2>第三章　品質計畫審查程序</h2>${OL(BOILER.s3)}
-    <h3>3.1 本案應審查之一級品質管制文件（依對到工項）</h3>
-    <ul>${ch3list||'<li class=muted>（標單未對到已建工項）</li>'}</ul>
-    <h2>第四章　施工計畫審查程序</h2>${OL(BOILER.s4)}
-    <h2>第五章　材料與設備抽驗程序及標準</h2>${OL(BOILER.s51)}
-    <h3>5.1 材料品質標準（依對到工項自動生成）</h3>
-    <p class="muted">來源：<span class="tag y">試驗頻率卡</span> ${ch5_lib} 列（已結構化、可算組數）｜<span class="tag n">工項卡②</span> ${ch5_mat} 列（該章尚無試驗頻率卡，取自工項卡材料頻率表；<b>頻率文字未經機讀結構化，須人工核算組數</b>）</p>
-    <table><tr><th>材料/工項</th><th>試驗項目</th><th>抽驗標準</th><th>抽驗頻率</th><th>依據/方法</th><th>來源</th></tr>${ch5||'<tr><td colspan=6 class=muted>（標單未對到已建工項）</td></tr>'}</table>
-    <h3>5.2 應用表單</h3><ul><li>表5.1 材料設備送審管制總表</li><li>表5.2 材料設備檢（試）驗管制總表</li></ul>
-    <h2>第六章　設備功能運轉測試程序及標準</h2>${OL(BOILER.s6)}
-    <h2>第七章　施工抽查程序及標準</h2>${OL(BOILER.s71)}
-    <h3>7.1 施工抽查標準（依工項）</h3>${ch7||'<p class=muted>（標單未對到已建工項）</p>'}
-    <h3>7.2 檢驗停留點清單（開工前告知廠商）</h3><ul>${holds||'<li class=muted>（無）</li>'}</ul>
-    <h3>7.3 應用表單</h3><ul><li>表7.1 施工抽查標準一覽表</li><li>表7.2 各工項施工抽查標準</li><li>表7.3 施工抽查紀錄</li></ul>
-    <h2>第八章　品質稽核</h2>${OL(BOILER.s8)}
-    <h2>第九章　文件紀錄管理系統</h2>${OL(BOILER.s9)}
+    ${banner}
+    ${chapterHTML(1,tier,`${OL(BOILER.s1)}
+      <h3>1.1 主要施工項目及數量（依標單彙整）</h3>
+      <table><tr><th>章碼</th><th>工項</th><th>標單項數</th><th>合計數量</th></tr>${ch1rows||'<tr><td colspan=4 class=muted>（未載入標單）</td></tr>'}</table>`)}
+    ${chapterHTML(2,tier,`${OL(BOILER.s2)}
+      <p class="muted">〔監造組織架構圖與人員配置表：依實際到位人員填列〕</p>`)}
+    ${chapterHTML(3,tier,`${OL(BOILER.s3)}
+      <h3>3.1 本案應審查之一級品質管制文件（依對到工項）</h3>
+      <ul>${ch3list||'<li class=muted>（標單未對到已建工項）</li>'}</ul>`)}
+    ${chapterHTML(4,tier,OL(BOILER.s4))}
+    ${chapterHTML(5,tier,`${OL(BOILER.s51)}
+      <h3>5.1 材料品質標準（依對到工項自動生成）</h3>
+      <p class="muted">來源：<span class="tag y">試驗頻率卡</span> ${ch5_lib} 列（已結構化、可算組數）｜<span class="tag n">工項卡②</span> ${ch5_mat} 列（該章尚無試驗頻率卡，取自工項卡材料頻率表；<b>頻率文字未經機讀結構化，須人工核算組數</b>）</p>
+      <table><tr><th>材料/工項</th><th>試驗項目</th><th>抽驗標準</th><th>抽驗頻率</th><th>依據/方法</th><th>來源</th></tr>${ch5||'<tr><td colspan=6 class=muted>（標單未對到已建工項）</td></tr>'}</table>
+      <h3>5.2 應用表單</h3><ul><li>表5.1 材料設備送審管制總表</li><li>表5.2 材料設備檢（試）驗管制總表</li></ul>`)}
+    ${chapterHTML(6,tier,OL(BOILER.s6))}
+    ${chapterHTML(7,tier,`${OL(BOILER.s71)}
+      <h3>7.1 施工抽查標準（依工項）</h3>${ch7||'<p class=muted>（標單未對到已建工項）</p>'}
+      <h3>7.2 檢驗停留點清單（開工前告知廠商）</h3><ul>${holds||'<li class=muted>（無）</li>'}</ul>
+      <h3>7.3 應用表單</h3><ul><li>表7.1 施工抽查標準一覽表</li><li>表7.2 各工項施工抽查標準</li><li>表7.3 施工抽查紀錄</li></ul>`)}
+    ${chapterHTML(8,tier,OL(BOILER.s8))}
+    ${chapterHTML(9,tier,OL(BOILER.s9))}
   </div>`;
 }
 function renderPlan(){
@@ -552,6 +632,11 @@ document.getElementById('file').onchange=e=>{const f=e.target.files[0];if(!f)ret
 document.getElementById('sampleBtn').onclick=()=>fetch('sample.xls').then(r=>r.arrayBuffer())
   .then(b=>loadWB(XLSX.read(b,{type:'array'}),'範例：航空城復原工程開口契約'))
   .catch(()=>document.getElementById('out').innerHTML='<div class="card miss">範例載入失敗（需 http 伺服器）。請改用上傳。</div>');
+for(const id of ['pAmt','pMech']){
+  const el=document.getElementById(id);
+  if(el) el.addEventListener('input',()=>{ updateTierNote(); if(MODE==='plan'&&LAST) renderPlan(); });
+}
+updateTierNote();
 document.getElementById('mCheck').onclick=()=>setMode('check');
 document.getElementById('mPick').onclick=()=>setMode('pick');
 document.getElementById('mPlan').onclick=()=>setMode('plan');
