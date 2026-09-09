@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>監造試驗查核 / 計畫產生</title>
-<script src="spec_data.js?v=2380469c0ce2"></script>
+<script src="spec_data.js?v=72de7d67f9a5"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root{ --bg:#f7f8fa; --card:#fff; --ink:#1c2330; --sub:#5b6472; --line:#e3e7ee;
@@ -57,6 +57,10 @@
 .pk-src.on{outline:2px solid var(--accent)}
 #picker table{margin-top:6px}
 #picker details>summary{cursor:pointer;padding:4px 0}
+.ph{background:rgba(246,173,85,.22);border:1px dashed var(--warn);border-radius:4px;padding:0 5px;font-weight:600}
+.tplnote{border-left:3px solid var(--line);padding:2px 0 2px 9px;margin:6px 0;color:var(--sub);font-size:13px}
+.condbox{border:1px dashed var(--err);border-radius:6px;padding:8px 10px;margin:8px 0}
+.genmiss{color:var(--warn);font-weight:600}
 </style>
 </head>
 <body>
@@ -92,6 +96,12 @@
         <label style="display:flex;align-items:center;gap:6px">🔴 契約金額
           <input id="pAmt" type="number" min="0" step="1" placeholder="例 3500" style="width:130px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)"> 萬元</label>
         <label style="display:flex;align-items:center;gap:6px"><input id="pMech" type="checkbox"> 含運轉類機電設備（增訂第六章）</label>
+      </div>
+      <div class="row" style="margin-top:8px;align-items:center">
+        <label style="display:flex;align-items:center;gap:6px">廠商契約金額
+          <input id="pVendorAmt" type="number" min="0" step="1" placeholder="供 §3 分級" style="width:130px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)"> 萬元</label>
+        <label style="display:flex;align-items:center;gap:6px"><input id="pPM" type="checkbox"> 本案有委託專案管理廠商</label>
+        <span class="muted">⚠ 廠商契約金額≠工程契約金額，前者決定廠商品質計畫分級（作業要點 §3）</span>
       </div>
       <p class="muted" id="tierNote" style="margin:8px 0 0">契約金額決定<b>要寫哪幾章</b>（作業要點 §8）。留空則產出全九章並標明未判定。</p>
     </details>
@@ -389,6 +399,114 @@ function updateTierNote(){
     +(inc.length?`（第 ${inc.join('、')} 章）`:'')+`<br>${t.warn}`;
 }
 
+// ================= 章樣板卡渲染（KB 為 SSOT，取代硬編 BOILER） =================
+// KB 八張章樣板卡之「內容段」（第一條 --- 之後）共 21,844 bytes，含 456 表格列；
+// 原硬編 BOILER 僅 5,479 bytes 條列文字，且是手維護副本——改 KB 卡片網頁不會知道。
+// 這裡把卡片 markdown 直接渲染，KB 一改、重新編譯即生效。
+const TPLCH = D.章樣板 || {};
+
+// --- 條件塊求值。回傳 true／false／null(無法判定) ---
+// 🔴 無法判定時**不得**擅自納入或排除——一律保留並標示，由使用者裁決。
+//    靜默納入 = 多寫（自行加重義務）；靜默排除 = 漏寫。兩種都比「標出來」糟。
+function condCtx(){
+  const P=profile();
+  const g=id=>(document.getElementById(id)||{}).value||'';
+  const amtV=parseFloat(String(g('pVendorAmt')).replace(/[,，\s]/g,''));
+  return { amt:P.amt, vendorAmt:isNaN(amtV)?null:amtV, owner:P.owner||'',
+           pm:(document.getElementById('pPM')||{}).checked,
+           pmSet:!!(document.getElementById('pPM')||{}).dataset.touched,
+           src:SRCSEL, tpls:[...(typeof PICK!=='undefined'?PICK.tpls:[])] };
+}
+function inRange(v,lo,hi){ return v==null?null:(v>=lo && (hi==null||v<hi)); }
+function evalCond(text,c){
+  const t=String(text||'').trim();
+  if(!t||t==='…') return null;
+  if(/^契約金額\s*<\s*5000萬$/.test(t))  return c.amt==null?null:c.amt<5000;
+  if(/^契約金額\s*≤\s*1000萬$/.test(t))  return c.amt==null?null:c.amt<=1000;
+  if(/^廠商契約金額\s*≥\s*5000萬$/.test(t))      return inRange(c.vendorAmt,5000,null);
+  if(/^廠商契約金額\s*1000萬~5000萬$/.test(t))   return inRange(c.vendorAmt,1000,5000);
+  if(/^廠商契約金額\s*150萬~1000萬$/.test(t))    return inRange(c.vendorAmt,150,1000);
+  if(/^本案有委託專案管理廠商$/.test(t)) return c.pmSet? c.pm : null;
+  if(/^本案無委託專案管理廠商$/.test(t)) return c.pmSet? !c.pm : null;
+  const own=(m)=>{ if(c.owner) return c.owner.includes(m); return null; };
+  if(/^主辦機關為台灣電力公司$/.test(t))     return c.src? (c.src==='台電')   : own('台灣電力');
+  if(/^主辦機關為桃園市政府工務局$/.test(t)) return c.src? (c.src==='桃園')   : own('桃園');
+  if(/^主辦機關為公路局$/.test(t))           return c.src? (c.src==='公路局') : own('公路局');
+  const BR=['範本_橋梁基礎與下部結構','範本_橋梁上部結構','範本_鋼橋工程','範本_橋梁附屬設施'];
+  if(/^橋梁工程$/.test(t)) return c.tpls.length? c.tpls.some(x=>BR.includes(x)) : null;
+  if(/^建築工程$/.test(t)) return c.tpls.length? false : null;
+  return null;
+}
+
+// --- 生成塊對映：卡片宣告的生成塊 → 已實作之產生內容 ---
+function genBlock(spec,G){
+  const t=String(spec||'');
+  if(/主要施工項目表/.test(t))                 return G.ch1;
+  if(/材料品質標準表/.test(t))                 return G.ch5;
+  if(/施工抽查標準|各工項抽查標準/.test(t))     return G.ch7;
+  if(/檢驗停留點清單/.test(t))                 return G.holds;
+  if(/分項施工計畫清單/.test(t))               return G.ch3;
+  return `<p class="genmiss">〔生成塊尚未實作：${esc(t.split('|')[0].trim()||'未命名')}〕<span class="muted">須人工填列</span></p>`;
+}
+
+// --- 極簡 markdown 渲染（只支援卡片實際用到的語法子集）---
+function mdInline(x){
+  return esc(x)
+    .replace(/\[\[[^\]|]*\|([^\]]*)\]\]/g,'$1')      // [[卡|別名]] → 別名（.doc 不需連結）
+    .replace(/\[\[([^\]]*)\]\]/g,'$1')
+    .replace(/\{\{參數:([^}|]*)(?:\|[^}]*)?\}\}/g,(m,f)=>`<span class="ph">［${esc(f.trim())}］</span>`)
+    .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
+    .replace(/`([^`]+)`/g,'<span class="code">$1</span>');
+}
+function renderMD(md,ctx,G){
+  // 1) 先處理條件塊（跨行），再逐行渲染
+  md=String(md||'').replace(/\{\{條件:([^}]*)\}\}([\s\S]*?)\{\{\/條件\}\}/g,(m,c,inner)=>{
+    const v=evalCond(c,ctx);
+    if(v===true)  return inner;
+    if(v===false) return '';
+    return `\n<!--COND-->〔條件未判定：${c.trim()||'（空）'}〕\n`+inner+'\n<!--/COND-->\n';
+  });
+  const L=md.split('\n'); let out='',tb=null,list=null;
+  const closeList=()=>{ if(list){ out+=`</${list}>`; list=null; } };
+  const closeTable=()=>{ if(tb){ out+='</table>'; tb=null; } };
+  for(let raw of L){
+    const ln=raw.replace(/\s+$/,'');
+    const g=ln.match(/^\{\{生成:([^}]*)\}\}\s*$/);
+    if(g){ closeList();closeTable(); out+=genBlock(g[1],G); continue; }
+    if(/^<!--COND-->/.test(ln)){ closeList();closeTable();
+      out+=`<div class="condbox"><span class="tag n">條件未判定</span> <span class="muted">${esc(ln.replace('<!--COND-->',''))}——請自行確認是否適用後保留或刪除</span>`; continue; }
+    if(/^<!--\/COND-->/.test(ln)){ closeList();closeTable(); out+='</div>'; continue; }
+    if(/^\s*$/.test(ln)){ closeList();closeTable(); continue; }
+    if(/^---+\s*$/.test(ln)){ closeList();closeTable(); out+='<hr>'; continue; }
+    if(/^\|/.test(ln)){
+      const cells=ln.replace(/^\||\|$/g,'').split(/(?<!\\)\|/).map(c=>c.trim().replace(/\\\|/g,'|'));
+      if(cells.every(c=>/^:?-{2,}:?$/.test(c))) continue;       // 分隔列
+      closeList();
+      if(!tb){ tb='t'; out+='<table><tr>'+cells.map(c=>`<th>${mdInline(c)}</th>`).join('')+'</tr>'; }
+      else   { out+='<tr>'+cells.map(c=>`<td>${mdInline(c)}</td>`).join('')+'</tr>'; }
+      continue;
+    }
+    closeTable();
+    let m;
+    if(m=ln.match(/^###\s+(.*)$/)){ closeList(); out+=`<h4>${mdInline(m[1])}</h4>`; continue; }
+    if(m=ln.match(/^##\s+(.*)$/)){ closeList();
+      // 標題末尾的〔常數塊＋參數〕〔生成塊〕等是撰寫器標註，非章節名稱；
+      // 開頭的 🔴⚠📌 等是 KB 內部強調記號——兩者都不該出現在送審文件的節標題
+      out+=`<h3>${mdInline(m[1].replace(/〔[^〕]*〕\s*$/,'').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\uFE0F]/gu,'').replace(/\s{2,}/g,' ').trim())}</h3>`; continue; }
+    if(m=ln.match(/^>\s?(.*)$/)){ closeList(); out+=`<p class="tplnote">${mdInline(m[1])}</p>`; continue; }
+    if(m=ln.match(/^\s*\d+\.\s+(.*)$/)){ if(list!=='ol'){closeList();out+='<ol>';list='ol';} out+=`<li>${mdInline(m[1])}</li>`; continue; }
+    if(m=ln.match(/^\s*[-*]\s+(.*)$/)){ if(list!=='ul'){closeList();out+='<ul>';list='ul';} out+=`<li>${mdInline(m[1])}</li>`; continue; }
+    closeList(); out+=`<p>${mdInline(ln)}</p>`;
+  }
+  closeList(); closeTable();
+  return out;
+}
+// 章內容：優先取 KB 章樣板卡；無卡者（第六章）回退硬編 BOILER
+function chapterBody(n,ctx,G,fallback){
+  const c=TPLCH[String(n)];
+  return c ? renderMD(c.md,ctx,G) : fallback;
+}
+
 function planHTML(){
   const all=grouped(LAST.items), matched=all.filter(x=>x.wi), P=profile();
   const blank='　　　　　　';
@@ -432,19 +550,27 @@ function planHTML(){
   // §三 一級品管文件（對到工項清單）
   const ch3list=matched.map(({code,wi})=>`<li>${esc(wiName(wi.title))}（${code}）：品質管理標準／自主檢查表／施工流程圖</li>`).join('');
   const tier=tierOf(P.amt,P.mech);
-  // 免列有兩種成因，須分開陳述——第六章由「含運轉類機電設備」開關決定，與金額級距無關。
-  // 混在同一句會讓讀者以為第六章也是金額造成的，追溯依據時會找錯條文。
+  const ctx=condCtx();
+  // 生成塊素材：卡片以 {{生成:…}} 宣告，由 genBlock 對映到這裡已產好的內容
+  const G={
+    ch1:`<table><tr><th>章碼</th><th>工項</th><th>標單項數</th><th>合計數量</th></tr>${ch1rows||'<tr><td colspan=4 class=muted>（未載入標單）</td></tr>'}</table>`,
+    ch5:`<p class="muted">來源：<span class="tag y">試驗頻率卡</span> ${ch5_lib} 列（已結構化、可算組數）｜<span class="tag n">工項卡②</span> ${ch5_mat} 列（該章尚無試驗頻率卡，取自工項卡材料頻率表；<b>頻率文字未經機讀結構化，須人工核算組數</b>）</p>
+      <table><tr><th>材料/工項</th><th>試驗項目</th><th>抽驗標準</th><th>抽驗頻率</th><th>依據/方法</th><th>來源</th></tr>${ch5||'<tr><td colspan=6 class=muted>（未對到已建工項）</td></tr>'}</table>`,
+    ch7:ch7||'<p class="muted">（未對到已建工項）</p>',
+    holds:`<ul>${holds||'<li class=muted>（無）</li>'}</ul>`,
+    ch3:`<ul>${ch3list||'<li class=muted>（未對到已建工項）</li>'}</ul>`
+  };
   const 免列_金額=[1,2,3,4,5,7,8,9].filter(n=>!tier.chs.has(n));
   const 免列_機電=tier.chs.has(6)?[]:[6];
+  const 卡數=[1,2,3,4,5,6,7,8,9].filter(n=>tier.chs.has(n)&&TPLCH[String(n)]).length;
   const banner=`<div style="border:1px solid var(--line);border-left:4px solid var(--accent);padding:10px 12px;margin:10px 0;border-radius:6px">
     <b>章節組成依據：公共工程施工品質管理作業要點 §8</b><br>
-    <span class="muted">契約金額 ${P.amt==null?'<b>未填</b>':'<b>'+P.amt.toLocaleString()+'</b> 萬元'}｜級距 <b>${esc(tier.label)}</b>｜應撰寫 <b>${tier.chs.size}</b> 章</span><br>
+    <span class="muted">契約金額 ${P.amt==null?'<b>未填</b>':'<b>'+P.amt.toLocaleString()+'</b> 萬元'}｜級距 <b>${esc(tier.label)}</b>｜應撰寫 <b>${tier.chs.size}</b> 章｜其中 <b>${卡數}</b> 章取自知識庫章樣板卡</span><br>
     <span class="muted">${tier.warn}</span>
     ${免列_金額.length?`<br><span class="muted">‧ 依<b>金額級距</b>免列：第 ${免列_金額.join('、')} 章</span>`:''}
     ${免列_機電.length?`<br><span class="muted">‧ 依<b>是否含運轉類機電設備</b>免列：第 6 章（與金額級距無關）</span>`:''}
     </div>`;
 
-  // 未達 150 萬：作業要點 §8 不須提報監造計畫，不應吐出九個「免列」標題。
   if(!tier.chs.size) return `<div class="plan">${head}
     <div class="card miss" style="margin-top:12px"><b>⛔ 本案不須提報監造計畫</b>
     <p class="muted" style="margin:6px 0 0">契約金額 <b>${P.amt==null?'—':P.amt.toLocaleString()}</b> 萬元，未達 150 萬。
@@ -452,31 +578,20 @@ function planHTML(){
     如契約另有約定或機關另有要求，請填入實際金額或依契約辦理。</p></div>
     <p class="muted">※ 已對到之工項與試驗頻率資料仍可於「🔍 試驗查核」模式查閱。</p></div>`;
 
+  const B=n=>chapterBody(n,ctx,G,'');
   return `<div class="plan">
-    <p class="muted">※ 依監造計畫製作綱要九章骨架生成：常數段＝綱要標準文字；表格數值＝施工規範知識庫（可追溯至章碼/CNS/原文）。請依契約與實際工項增修後定稿。</p>
+    <p class="muted">※ 章節本文取自施工規範知識庫之監造計畫章樣板卡（可追溯至製作綱要與作業要點條號）；表格數值由案件工項自動生成。<span class="ph">［方括號］</span>為待填參數，<span class="tag n">條件未判定</span>區塊請自行確認是否適用。請依契約增修後定稿。</p>
     ${head}
     ${banner}
-    ${chapterHTML(1,tier,`${OL(BOILER.s1)}
-      <h3>1.1 主要施工項目及數量（依標單彙整）</h3>
-      <table><tr><th>章碼</th><th>工項</th><th>標單項數</th><th>合計數量</th></tr>${ch1rows||'<tr><td colspan=4 class=muted>（未載入標單）</td></tr>'}</table>`)}
-    ${chapterHTML(2,tier,`${OL(BOILER.s2)}
-      <p class="muted">〔監造組織架構圖與人員配置表：依實際到位人員填列〕</p>`)}
-    ${chapterHTML(3,tier,`${OL(BOILER.s3)}
-      <h3>3.1 本案應審查之一級品質管制文件（依對到工項）</h3>
-      <ul>${ch3list||'<li class=muted>（標單未對到已建工項）</li>'}</ul>`)}
-    ${chapterHTML(4,tier,OL(BOILER.s4))}
-    ${chapterHTML(5,tier,`${OL(BOILER.s51)}
-      <h3>5.1 材料品質標準（依對到工項自動生成）</h3>
-      <p class="muted">來源：<span class="tag y">試驗頻率卡</span> ${ch5_lib} 列（已結構化、可算組數）｜<span class="tag n">工項卡②</span> ${ch5_mat} 列（該章尚無試驗頻率卡，取自工項卡材料頻率表；<b>頻率文字未經機讀結構化，須人工核算組數</b>）</p>
-      <table><tr><th>材料/工項</th><th>試驗項目</th><th>抽驗標準</th><th>抽驗頻率</th><th>依據/方法</th><th>來源</th></tr>${ch5||'<tr><td colspan=6 class=muted>（標單未對到已建工項）</td></tr>'}</table>
-      <h3>5.2 應用表單</h3><ul><li>表5.1 材料設備送審管制總表</li><li>表5.2 材料設備檢（試）驗管制總表</li></ul>`)}
+    ${chapterHTML(1,tier,B(1))}
+    ${chapterHTML(2,tier,B(2))}
+    ${chapterHTML(3,tier,B(3))}
+    ${chapterHTML(4,tier,B(4))}
+    ${chapterHTML(5,tier,B(5))}
     ${chapterHTML(6,tier,OL(BOILER.s6))}
-    ${chapterHTML(7,tier,`${OL(BOILER.s71)}
-      <h3>7.1 施工抽查標準（依工項）</h3>${ch7||'<p class=muted>（標單未對到已建工項）</p>'}
-      <h3>7.2 檢驗停留點清單（開工前告知廠商）</h3><ul>${holds||'<li class=muted>（無）</li>'}</ul>
-      <h3>7.3 應用表單</h3><ul><li>表7.1 施工抽查標準一覽表</li><li>表7.2 各工項施工抽查標準</li><li>表7.3 施工抽查紀錄</li></ul>`)}
-    ${chapterHTML(8,tier,OL(BOILER.s8))}
-    ${chapterHTML(9,tier,OL(BOILER.s9))}
+    ${chapterHTML(7,tier,B(7))}
+    ${chapterHTML(8,tier,B(8))}
+    ${chapterHTML(9,tier,B(9))}
   </div>`;
 }
 function renderPlan(){
@@ -632,7 +747,8 @@ document.getElementById('file').onchange=e=>{const f=e.target.files[0];if(!f)ret
 document.getElementById('sampleBtn').onclick=()=>fetch('sample.xls').then(r=>r.arrayBuffer())
   .then(b=>loadWB(XLSX.read(b,{type:'array'}),'範例：航空城復原工程開口契約'))
   .catch(()=>document.getElementById('out').innerHTML='<div class="card miss">範例載入失敗（需 http 伺服器）。請改用上傳。</div>');
-for(const id of ['pAmt','pMech']){
+const pm=document.getElementById('pPM'); if(pm) pm.addEventListener('change',()=>{pm.dataset.touched='1';});
+for(const id of ['pAmt','pMech','pVendorAmt','pPM','pOwner']){
   const el=document.getElementById(id);
   if(el) el.addEventListener('input',()=>{ updateTierNote(); if(MODE==='plan'&&LAST) renderPlan(); });
 }
