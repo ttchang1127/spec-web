@@ -47,6 +47,10 @@
   .plan table{margin:6px 0} .plan th,.plan td{border:1px solid var(--line)}
   .foot{color:var(--sub);font-size:12px;margin-top:22px}
   details summary{cursor:pointer;color:var(--sub)}
+.pk-src{font-size:15px;padding:8px 18px}
+.pk-src.on{outline:2px solid var(--acc)}
+#picker table{margin-top:6px}
+#picker details>summary{cursor:pointer;padding:4px 0}
 </style>
 </head>
 <body>
@@ -64,6 +68,7 @@
     <div class="row" style="margin-top:12px">
       <span class="muted">模式：</span>
       <button id="mCheck" class="on">🔍 試驗查核</button>
+      <button id="mPick">🧩 選工項（無標單）</button>
       <button id="mPlan">📝 監造計畫產生（九章）</button>
       <button id="dl" style="display:none">⬇ 下載 .doc</button>
     </div>
@@ -81,6 +86,7 @@
     <div class="muted" style="margin-top:10px">規則來源：<span id="meta"></span></div>
   </div>
 
+  <div id="picker" style="display:none"></div>
   <div id="out"></div>
   <p class="foot">v1.0 ｜ 燃料 spec_data.js（由 <span class="code">spec_kb_export.py</span> 從施工規範知識庫編譯）｜ 靜態 client-side</p>
 </div>
@@ -214,8 +220,28 @@ function calcN(machine,qty,unit){
       +(m.remainder_min?'（餘≥'+m.remainder_min+'另計）':'');
     return {n,note};
   }
+  // 比例制。基底有兩種，靠有無宣告 qty_unit 區分：
+  //  (a) 基底＝標單數量（如 01991 人孔調平取人孔座數 30%、16120 取線卷總數 5%）
+  //      → 宣告 qty_unit；走到這裡代表函式開頭的單位檢查已通過，可直接實算。
+  //  (b) 基底不在標單（如 03210 對銲續接數 25%、03231 原廠批總數 5%）
+  //      → 不宣告 qty_unit，維持提示型 n:null。ratio_base 用來把基底名稱寫進註記，
+  //        取代舊版寫死的「原廠取樣數量」——該措辭對 (b) 的續接數情形本身就是錯的。
+  if(m.per_ratio){
+    const base = m.ratio_base ? '（基底：'+m.ratio_base+'）' : '';
+    if(m.qty_unit){
+      if(m.exempt_below && qty < m.exempt_below)
+        return {n:0,note:'<'+m.exempt_below+' 免驗（憑合格證明）'};
+      let n=Math.ceil(qty*m.per_ratio/100);
+      const floor=m.ratio_min||0;
+      const note='抽驗比例 '+m.per_ratio+'%'+base+(floor&&n<floor?'，未達下限改取 '+floor:'');
+      if(floor&&n<floor) n=floor;
+      return {n,note};
+    }
+    return {n:null,note:'抽驗比例 '+m.per_ratio+'%，需先確認基數'
+      +(m.ratio_base?'：'+m.ratio_base:'（基底非標單數量）')
+      +(m.ratio_min?'；且至少 '+m.ratio_min:'')};
+  }
   if(m.exempt_below) return {n:0,note:'<'+m.exempt_below+' 免驗（憑證明），達門檻另計'};
-  if(m.per_ratio) return {n:null,note:'原廠取樣數量之'+m.per_ratio+'%（需原廠基數）'};
   if(m.per_batch) return {n:null,note:'每批×'+m.per_batch+'（需批數）'};
   if(m.per_truck) return {n:null,note:'每車'};
   if(m.per_source) return {n:null,note:'每料源'};
@@ -226,8 +252,13 @@ function calcN(machine,qty,unit){
   if(m.per_piece_after_first_200) return {n:null,note:'分段：達門檻1次、超過每200塊加1次'};
   return {n:null,note:''};
 }
+// SRCSEL：選定之規範源。null＝沿用扁平字典（桃園優先）＝原行為。
+// 🔴 扁平字典遇同章碼是桃園優先，勾選公路局源時若仍查扁平字典會取到桃園那張卡，
+//    而兩源同章碼數值嚴禁互借——那會產出錯誤的監造計畫且完全不報錯。
+let SRCSEL=null;
+function wiOf(code){ return (SRCSEL ? (D.工項_源[SRCSEL]||{}) : D.工項)[code]; }
 function grouped(items){ const b={}; items.forEach(it=>{(b[it.章碼]=b[it.章碼]||[]).push(it);});
-  return Object.keys(b).sort().map(c=>({code:c,wi:D.工項[c],rows:b[c]})); }
+  return Object.keys(b).sort().map(c=>({code:c,wi:wiOf(c),rows:b[c]})); }
 
 // ================= 試驗查核 =================
 function renderCheck(){
@@ -372,18 +403,137 @@ function downloadDoc(){
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=nm; a.click();
 }
 
-function render(){ if(!LAST){document.getElementById('out').innerHTML='';return;} MODE==='plan'?renderPlan():renderCheck(); }
-function setMode(m){ MODE=m;
-  document.getElementById('mCheck').className=m==='check'?'on':'';
-  document.getElementById('mPlan').className=m==='plan'?'on':''; render(); }
 
-function loadWB(wb,label){ LAST=parseWB(wb); document.getElementById('src').textContent=label+`（工項 ${LAST.items.length}）`; render(); }
+// ================= 分項工程範本勾選（無標單模式） =================
+// 設計：勾選結果組成與 parseWB 相同形狀的 LAST（items:[{章碼,項目,單位,數量}]），
+// 因此第五章/第七章/下載 .doc 全部沿用既有程式碼，不必為「無標單」另寫一套產生器。
+// 無數量時 calcN 回 n:null 並附註，組數欄顯示「需數量」——規則照印，只少那個數字。
+const TPL = D.分項工程範本 || {};
+let PICK = { src:null, tpls:new Set(), off:new Set(), on:new Set() };
+
+function tplList(){ return Object.entries(TPL).sort((a,b)=>String(a[1].代號).localeCompare(String(b[1].代號))); }
+function srcTable(){ return (D.工項_源||{})[PICK.src] || {}; }
+function tplAvail(v){ const t=srcTable(); return v.章碼.filter(r=>t[r.章碼]).length; }
+
+// 目前選定之章碼＝各已勾範本的核心章（扣掉手動取消）＋手動加選
+function pickedCodes(){
+  const t=srcTable(), out=new Set();
+  for(const id of PICK.tpls){ const v=TPL[id]; if(!v) continue;
+    for(const r of v.章碼){ if(r.分類==='核心' && t[r.章碼] && !PICK.off.has(r.章碼)) out.add(r.章碼); } }
+  for(const c of PICK.on) if(t[c]) out.add(c);
+  return out;
+}
+
+function renderPicker(){
+  const el=document.getElementById('picker');
+  const SRCS=['桃園','公路局','台電'];
+  let h='<div class="card"><h3 style="margin:0 0 4px">🧩 選工項（無標單也能產出監造計畫）</h3>'
+   +'<p class="muted" style="margin:0 0 12px">監造計畫 95% 的內容與標單數量無關——停留點、查核紅線、材料試驗規則都不需要數量。'
+   +'只有「本案要做幾組」需要，未填數量時該欄顯示「需數量」，其餘照常產出。</p>';
+
+  // Step 1 規範源（閘門）
+  h+='<h4 style="margin:14px 0 6px">① 選規範源<span class="muted" style="font-weight:400"> — 必選，且只能選一個</span></h4>'
+   +'<p class="muted" style="margin:0 0 8px">🔴 三源同章碼數值<b>嚴禁互借</b>，且分歧方向逐章不同（02742 公路局較寬、03210/03231 公路局較嚴）。故此處是閘門不是篩選器。</p><div class="row">';
+  for(const sname of SRCS){ const n=Object.keys((D.工項_源||{})[sname]||{}).length;
+    h+=`<button class="pk-src ${PICK.src===sname?'on':''}" data-src="${sname}">${sname}<span class="muted"> ${n} 章</span></button>`; }
+  h+='</div>';
+
+  if(!PICK.src){ h+='<p class="muted" style="margin-top:14px">↑ 先選規範源，才會列出可用的分項工程。</p></div>'; el.innerHTML=h; bindPicker(); return; }
+
+  // Step 2 範本
+  h+='<h4 style="margin:18px 0 6px">② 勾選分項工程<span class="muted" style="font-weight:400"> — 可複選，之後可再組合</span></h4>'
+   +'<table><tr><th style="width:38px"></th><th>分項工程</th><th style="width:96px">本源可用</th><th>前置範本</th></tr>';
+  for(const [id,v] of tplList()){
+    const avail=tplAvail(v), dis=avail===0, ck=PICK.tpls.has(id);
+    const pre=(v.前置範本||[]).map(x=>{ const p2=TPL[x]; return p2?p2.代號:x; }).join('、')||'—';
+    const miss=(v.前置範本||[]).filter(x=>!PICK.tpls.has(x));
+    h+=`<tr${dis?' class="muted"':''}><td><input type="checkbox" class="pk-tpl" data-id="${id}" ${ck?'checked':''} ${dis?'disabled':''}></td>`
+     +`<td><b>${v.代號}</b> ${esc(v.title.replace(/^範本\s*/,''))}${dis?' <span class="tag n">本源無可用章</span>':''}`
+     +`${ck&&miss.length?` <span class="tag n">建議一併勾選 ${miss.map(x=>TPL[x]?TPL[x].代號:x).join('、')}</span>`:''}</td>`
+     +`<td>${avail} / ${v.章碼.length}</td><td class="muted">${esc(pre)}</td></tr>`;
+  }
+  h+='</table>';
+
+  // Step 3 章碼清單
+  const picked=pickedCodes(), t=srcTable();
+  if(PICK.tpls.size){
+    h+=`<h4 style="margin:18px 0 6px">③ 逐章確認<span class="muted" style="font-weight:400"> — 核心章預設勾選；選配章請依實際工程內容勾</span></h4>`
+     +`<p class="muted" style="margin:0 0 8px">⚠ 選配章勿全勾。例如基樁四種工法全勾，會把不相干的停留點寫進監造計畫。</p>`;
+    for(const id of [...PICK.tpls].sort((a,b)=>String(TPL[a].代號).localeCompare(String(TPL[b].代號)))){
+      const v=TPL[id]; if(!v) continue;
+      h+=`<details open style="margin:8px 0"><summary><b>${v.代號}</b> ${esc(v.title.replace(/^範本\s*/,''))}</summary><table style="margin-top:6px">`
+       +'<tr><th style="width:38px"></th><th style="width:88px">章碼</th><th style="width:64px">分類</th><th>章名</th><th>說明</th></tr>';
+      for(const r of v.章碼){
+        const has=!!t[r.章碼];
+        const core=r.分類==='核心';
+        const on = has && (core ? !PICK.off.has(r.章碼) : PICK.on.has(r.章碼));
+        h+=`<tr${has?'':' class="muted"'}>`
+         +`<td><input type="checkbox" class="pk-code" data-code="${r.章碼}" data-core="${core?1:0}" ${on?'checked':''} ${has?'':'disabled'}></td>`
+         +`<td><span class="code">${r.章碼}</span></td>`
+         +`<td>${core?'<span class="tag y">核心</span>':'<span class="tag n">'+esc(r.分類)+'</span>'}</td>`
+         +`<td>${esc(r.章名)}${has?'':' <span class="tag n">本源無此章</span>'}</td>`
+         +`<td class="muted">${esc(r.說明)}</td></tr>`;
+      }
+      h+='</table></details>';
+    }
+  }
+
+  h+=`<div class="row" style="margin-top:16px;align-items:center">`
+   +`<button id="pkGo" ${picked.size?'':'disabled'}>✅ 產生工項清單（${picked.size} 章）→ 監造計畫</button>`
+   +`<button id="pkClear">✕ 清除選取</button>`
+   +`<span class="muted">已選 ${picked.size} 章｜規範源 ${PICK.src}</span></div></div>`;
+  el.innerHTML=h; bindPicker();
+}
+
+function bindPicker(){
+  document.querySelectorAll('.pk-src').forEach(b=>b.onclick=()=>{
+    if(PICK.src!==b.dataset.src){ PICK.src=b.dataset.src; PICK.tpls=new Set(); PICK.off=new Set(); PICK.on=new Set(); }
+    renderPicker(); });
+  document.querySelectorAll('.pk-tpl').forEach(c=>c.onchange=()=>{
+    c.checked?PICK.tpls.add(c.dataset.id):PICK.tpls.delete(c.dataset.id); renderPicker(); });
+  document.querySelectorAll('.pk-code').forEach(c=>c.onchange=()=>{
+    const code=c.dataset.code, core=c.dataset.core==='1';
+    if(core){ c.checked?PICK.off.delete(code):PICK.off.add(code); }
+    else    { c.checked?PICK.on.add(code):PICK.on.delete(code); }
+    renderPicker(); });
+  const go=document.getElementById('pkGo'); if(go) go.onclick=applyPicks;
+  const cl=document.getElementById('pkClear'); if(cl) cl.onclick=()=>{
+    PICK.tpls=new Set(); PICK.off=new Set(); PICK.on=new Set(); renderPicker(); };
+}
+
+function applyPicks(){
+  const t=srcTable(), items=[];
+  for(const code of [...pickedCodes()].sort()){
+    const wi=t[code]; if(!wi) continue;
+    items.push({章碼:code, 項目:wiName(wi.title), 單位:'', 數量:null});
+  }
+  SRCSEL=PICK.src;
+  LAST={items, tests:[]};
+  document.getElementById('src').textContent=`勾選：${PICK.src}｜${[...PICK.tpls].map(x=>TPL[x]?TPL[x].代號:x).sort().join('+')}（工項 ${items.length}）`;
+  setMode('plan');
+}
+
+function render(){
+  const pk=document.getElementById('picker'), out=document.getElementById('out');
+  if(MODE==='pick'){ pk.style.display=''; out.innerHTML=''; renderPicker(); return; }
+  pk.style.display='none';
+  if(!LAST){ out.innerHTML='<div class="card muted">尚無工項清單。可<b>上傳標單</b>，或按「🧩 選工項（無標單）」以分項工程範本勾選。</div>'; return; }
+  MODE==='plan'?renderPlan():renderCheck();
+}
+function setMode(m){ MODE=m;
+  for(const [id,mm] of [['mCheck','check'],['mPick','pick'],['mPlan','plan']])
+    document.getElementById(id).className=(m===mm?'on':'');
+  document.getElementById('dl').style.display=(m==='plan'&&LAST)?'':'none';
+  render(); }
+
+function loadWB(wb,label){ SRCSEL=null; LAST=parseWB(wb); document.getElementById('src').textContent=label+`（工項 ${LAST.items.length}）`; render(); }
 document.getElementById('file').onchange=e=>{const f=e.target.files[0];if(!f)return;
   const rd=new FileReader();rd.onload=ev=>loadWB(XLSX.read(ev.target.result,{type:'array'}),'上傳：'+f.name);rd.readAsArrayBuffer(f);};
 document.getElementById('sampleBtn').onclick=()=>fetch('sample.xls').then(r=>r.arrayBuffer())
   .then(b=>loadWB(XLSX.read(b,{type:'array'}),'範例：航空城復原工程開口契約'))
   .catch(()=>document.getElementById('out').innerHTML='<div class="card miss">範例載入失敗（需 http 伺服器）。請改用上傳。</div>');
 document.getElementById('mCheck').onclick=()=>setMode('check');
+document.getElementById('mPick').onclick=()=>setMode('pick');
 document.getElementById('mPlan').onclick=()=>setMode('plan');
 document.getElementById('dl').onclick=downloadDoc;
 </script>
