@@ -8,9 +8,11 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root{ --bg:#f7f8fa; --card:#fff; --ink:#1c2330; --sub:#5b6472; --line:#e3e7ee;
-    --accent:#2b6cb0; --ok:#2f855a; --warn:#c05621; --err:#c53030; --chip:#edf2f7; }
+    --accent:#2b6cb0; --ok:#2f855a; --warn:#c05621; --err:#c53030; --chip:#edf2f7;
+    --onAccent:#fff; }
   @media (prefers-color-scheme:dark){ :root{ --bg:#12151b; --card:#1b1f27; --ink:#e6e9ef;
-    --sub:#9aa4b2; --line:#2a2f3a; --accent:#63b3ed; --ok:#68d391; --warn:#f6ad55; --err:#fc8181; --chip:#252b36; } }
+    --sub:#9aa4b2; --line:#2a2f3a; --accent:#63b3ed; --ok:#68d391; --warn:#f6ad55; --err:#fc8181; --chip:#252b36;
+    --onAccent:#12151b; } }
   *{box-sizing:border-box}
   body{margin:0;font-family:-apple-system,"PingFang TC","Noto Sans TC",system-ui,sans-serif;
     background:var(--bg);color:var(--ink);line-height:1.55;font-size:15px}
@@ -20,8 +22,12 @@
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:16px}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
   button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--chip);color:var(--ink);cursor:pointer}
-  button.primary{background:var(--accent);color:#fff;border-color:transparent}
-  button.on{background:var(--accent);color:#fff;border-color:transparent}
+  button.primary{background:var(--accent);color:var(--onAccent);border-color:transparent}
+  button.on{background:var(--accent);color:var(--onAccent);border-color:transparent}
+  /* 選中態內的次要文字（如「159 章」）原固定用 --sub，壓在 accent 底上只有 1.11:1，等於看不見。
+     不用 opacity 降階——實測要 ≥.90 才過 4.5:1，而 .90 與 1.0 肉眼幾乎無差，等於白加一個魔術數字。
+     改為顏色給滿、靠既有的字級差（12.5px vs 15px）表示次要。淺色 5.42:1／深色 8.01:1。 */
+  button.on .muted,button.primary .muted{color:var(--onAccent)}
   button:hover{filter:brightness(1.05)}
   .pill{background:var(--chip);border-radius:20px;padding:3px 12px;font-size:13px}
   .stat{display:flex;gap:14px;flex-wrap:wrap} .stat .box{background:var(--chip);border-radius:9px;padding:8px 14px;min-width:92px}
@@ -48,7 +54,7 @@
   .foot{color:var(--sub);font-size:12px;margin-top:22px}
   details summary{cursor:pointer;color:var(--sub)}
 .pk-src{font-size:15px;padding:8px 18px}
-.pk-src.on{outline:2px solid var(--acc)}
+.pk-src.on{outline:2px solid var(--accent)}
 #picker table{margin-top:6px}
 #picker details>summary{cursor:pointer;padding:4px 0}
 </style>
@@ -98,7 +104,7 @@ let LAST=null, MODE='check';
 // index.html 與 spec_data.js 各自快取，版本錯配時這行會露出舊日期/舊計數。
 document.getElementById('meta').innerHTML =
   `工項 ${Object.keys(D.工項).length} 章碼｜試驗庫 ${D.meta.counts.試驗庫}｜材料頻率 ${Object.values(D.工項).filter(v=>v.材料頻率&&v.材料頻率.length).length} 章｜標單別名 ${D.meta.counts.別名}`
-  + `｜分項工程範本 ${D.meta.counts.分項工程範本 ?? '<b style="color:var(--bad)">無（spec_data.js 為舊版，請強制重新整理）</b>'}`
+  + `｜分項工程範本 ${D.meta.counts.分項工程範本 ?? '<b style="color:var(--err)">無（spec_data.js 為舊版，請強制重新整理）</b>'}`
   + `（資料 ${D.meta.generated}）`;
 const esc = s => String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const wiName = t => String(t||'').replace(/^工項\s*/,'');
