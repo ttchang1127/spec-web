@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>監造試驗查核 / 計畫產生</title>
-<script src="spec_data.js?v=72de7d67f9a5"></script>
+<script src="spec_data.js?v=9d9ef493fab8"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root{ --bg:#f7f8fa; --card:#fff; --ink:#1c2330; --sub:#5b6472; --line:#e3e7ee;
@@ -288,6 +288,14 @@ function calcN(machine,qty,unit){
 // 🔴 扁平字典遇同章碼是桃園優先，勾選公路局源時若仍查扁平字典會取到桃園那張卡，
 //    而兩源同章碼數值嚴禁互借——那會產出錯誤的監造計畫且完全不報錯。
 let SRCSEL=null;
+// 台電發布單位（供電處／輸變電工程處）。勾選路徑由閘門決定；標單路徑由對到之台電工項推定。
+let SRCUNIT=null;
+function unitOfCase(){
+  if(SRCUNIT) return SRCUNIT;
+  const us=new Set();
+  for(const it of ((typeof LAST!=='undefined'&&LAST)?LAST.items:[])){ const w=wiOf(it.章碼); if(w&&w.發布單位) us.add(w.發布單位); }
+  return us.size===1 ? [...us][0] : null;     // 兩家並存＝混用，不擅自判定
+}
 function wiOf(code){ return (SRCSEL ? (D.工項_源[SRCSEL]||{}) : D.工項)[code]; }
 function grouped(items){ const b={}; items.forEach(it=>{(b[it.章碼]=b[it.章碼]||[]).push(it);});
   return Object.keys(b).sort().map(c=>({code:c,wi:wiOf(c),rows:b[c]})); }
@@ -417,7 +425,7 @@ function condCtx(){
   return { amt:P.amt, vendorAmt:isNaN(amtV)?null:amtV, owner:P.owner||'',
            pm:(document.getElementById('pPM')||{}).checked,
            pmSet:!!(document.getElementById('pPM')||{}).dataset.touched,
-           src:SRCSEL, tpls:[...(typeof PICK!=='undefined'?PICK.tpls:[])] };
+           src:SRCSEL, unit:unitOfCase(), tpls:[...(typeof PICK!=='undefined'?PICK.tpls:[])] };
 }
 function inRange(v,lo,hi){ return v==null?null:(v>=lo && (hi==null||v<hi)); }
 function evalCond(text,c){
@@ -432,6 +440,11 @@ function evalCond(text,c){
   if(/^本案無委託專案管理廠商$/.test(t)) return c.pmSet? !c.pm : null;
   const own=(m)=>{ if(c.owner) return c.owner.includes(m); return null; };
   if(/^主辦機關為台灣電力公司$/.test(t))     return c.src? (c.src==='台電')   : own('台灣電力');
+  // 台電兩個發布單位用詞與引用條號不同（輸變電處「承包商」49 次 vs 供電處「承攬商」493 次），
+  // 章樣板的台電專屬段已依發布單位拆開。非台電案＝false；台電但無法判定單位＝null（標示由使用者裁決）。
+  const isTP = c.src? c.src==='台電' : (own('台灣電力')===true);
+  if(/^台電供電處$/.test(t))       return !isTP? false : (c.unit? c.unit==='台灣電力公司供電處' : (c.owner.includes('供電處')?true:null));
+  if(/^台電輸變電工程處$/.test(t)) return !isTP? false : (c.unit? c.unit==='台灣電力公司輸變電工程處' : (c.owner.includes('輸變電')?true:null));
   if(/^主辦機關為桃園市政府工務局$/.test(t)) return c.src? (c.src==='桃園')   : own('桃園');
   if(/^主辦機關為公路局$/.test(t))           return c.src? (c.src==='公路局') : own('公路局');
   const BR=['範本_橋梁基礎與下部結構','範本_橋梁上部結構','範本_鋼橋工程','範本_橋梁附屬設施'];
@@ -805,10 +818,24 @@ function downloadDoc(){
 // 因此第五章/第七章/下載 .doc 全部沿用既有程式碼，不必為「無標單」另寫一套產生器。
 // 無數量時 calcN 回 n:null 並附註，組數欄顯示「需數量」——規則照印，只少那個數字。
 const TPL = D.分項工程範本 || {};
-let PICK = { src:null, tpls:new Set(), off:new Set(), on:new Set() };
+let PICK = { src:null, unit:null, tpls:new Set(), off:new Set(), on:new Set() };
 
-function tplList(){ return Object.entries(TPL).sort((a,b)=>String(a[1].代號).localeCompare(String(b[1].代號))); }
-function srcTable(){ return (D.工項_源||{})[PICK.src] || {}; }
+// 🔴 台電有兩個發布單位（供電處 02551AA 系列／輸變電工程處 02551A），同屬「台電」規範源，
+//    但上游文件族不同（03055 vs 03050、每組試體只數規則不同），禁互用——與三源禁互補同一類風險。
+//    故台電源內再加一道閘門：必須先選發布單位，範本與章碼都依此過濾。
+const TP_UNITS=['台灣電力公司供電處','台灣電力公司輸變電工程處'];
+function unitOK(u){ return PICK.src!=='台電' || !u || !PICK.unit || u===PICK.unit; }
+function tplList(){
+  return Object.entries(TPL)
+    .filter(([id,v])=> PICK.src!=='台電' ? !v.發布單位 : (!v.發布單位 || v.發布單位===PICK.unit))
+    .sort((a,b)=>String(a[1].代號).localeCompare(String(b[1].代號)));
+}
+function srcTable(){
+  const t=(D.工項_源||{})[PICK.src] || {};
+  if(PICK.src!=='台電') return t;
+  const o={}; for(const [k,v] of Object.entries(t)) if(unitOK(v.發布單位)) o[k]=v;
+  return o;
+}
 function tplAvail(v){ const t=srcTable(); return v.章碼.filter(r=>t[r.章碼]).length; }
 
 // 目前選定之章碼＝各已勾範本的核心章（扣掉手動取消）＋手動加選
@@ -835,6 +862,16 @@ function renderPicker(){
   h+='</div>';
 
   if(!PICK.src){ h+='<p class="muted" style="margin-top:14px">↑ 先選規範源，才會列出可用的分項工程。</p></div>'; el.innerHTML=h; bindPicker(); return; }
+  if(PICK.src==='台電'){
+    h+='<h4 style="margin:18px 0 6px">①-2 選發布單位<span class="muted" style="font-weight:400"> — 台電必選，且只能選一個</span></h4>'
+     +'<p class="muted" style="margin:0 0 8px">🔴 供電處（02551<b>AA</b> 雙 A）與輸變電工程處（02551<b>A</b> 單 A）<b>章名相同、內容不同</b>，上游文件族不同（03055 vs 03050），<b>禁互用</b>。請依主辦單位選擇。</p><div class="row">';
+    for(const u of TP_UNITS){
+      const n=Object.values((D.工項_源||{})['台電']||{}).filter(v=>v.發布單位===u).length;
+      h+=`<button class="pk-unit pk-src ${PICK.unit===u?'on':''}" data-unit="${u}">${u.replace('台灣電力公司','')}<span class="muted"> ${n} 章</span></button>`;
+    }
+    h+='</div>';
+    if(!PICK.unit){ h+='<p class="muted" style="margin-top:14px">↑ 先選發布單位，才會列出可用的分項工程。</p></div>'; el.innerHTML=h; bindPicker(); return; }
+  }
 
   // Step 2 範本
   // 🔴 空清單必須大聲失敗。先前只畫表頭不畫列，看起來像「這個源沒有範本」，
@@ -893,7 +930,11 @@ function renderPicker(){
 
 function bindPicker(){
   document.querySelectorAll('.pk-src').forEach(b=>b.onclick=()=>{
-    if(PICK.src!==b.dataset.src){ PICK.src=b.dataset.src; PICK.tpls=new Set(); PICK.off=new Set(); PICK.on=new Set(); }
+    if(!b.dataset.src) return;
+    if(PICK.src!==b.dataset.src){ PICK.src=b.dataset.src; PICK.unit=null; PICK.tpls=new Set(); PICK.off=new Set(); PICK.on=new Set(); }
+    renderPicker(); });
+  document.querySelectorAll('.pk-unit').forEach(b=>b.onclick=()=>{
+    if(PICK.unit!==b.dataset.unit){ PICK.unit=b.dataset.unit; PICK.tpls=new Set(); PICK.off=new Set(); PICK.on=new Set(); }
     renderPicker(); });
   document.querySelectorAll('.pk-tpl').forEach(c=>c.onchange=()=>{
     c.checked?PICK.tpls.add(c.dataset.id):PICK.tpls.delete(c.dataset.id); renderPicker(); });
@@ -913,9 +954,9 @@ function applyPicks(){
     const wi=t[code]; if(!wi) continue;
     items.push({章碼:code, 項目:wiName(wi.title), 單位:'', 數量:null});
   }
-  SRCSEL=PICK.src;
+  SRCSEL=PICK.src; SRCUNIT=(PICK.src==='台電')?PICK.unit:null;
   LAST={items, tests:[]};
-  document.getElementById('src').textContent=`勾選：${PICK.src}｜${[...PICK.tpls].map(x=>TPL[x]?TPL[x].代號:x).sort().join('+')}（工項 ${items.length}）`;
+  document.getElementById('src').textContent=`勾選：${PICK.src}${PICK.unit?'・'+PICK.unit.replace('台灣電力公司',''):''}｜${[...PICK.tpls].map(x=>TPL[x]?TPL[x].代號:x).sort().join('+')}（工項 ${items.length}）`;
   setMode('plan');
 }
 
@@ -934,7 +975,7 @@ function setMode(m){ MODE=m;
   document.getElementById('dl').style.display=(m==='plan'&&LAST)?'':'none';
   render(); }
 
-function loadWB(wb,label){ SRCSEL=null; LAST=parseWB(wb); document.getElementById('src').textContent=label+`（工項 ${LAST.items.length}）`; render(); }
+function loadWB(wb,label){ SRCSEL=null; SRCUNIT=null; LAST=parseWB(wb); document.getElementById('src').textContent=label+`（工項 ${LAST.items.length}）`; render(); }
 document.getElementById('file').onchange=e=>{const f=e.target.files[0];if(!f)return;
   const rd=new FileReader();rd.onload=ev=>loadWB(XLSX.read(ev.target.result,{type:'array'}),'上傳：'+f.name);rd.readAsArrayBuffer(f);};
 document.getElementById('sampleBtn').onclick=()=>fetch('sample.xls').then(r=>r.arrayBuffer())
